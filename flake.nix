@@ -29,7 +29,16 @@
               rustfmt
               pkg-config
               openssl
+              wayland
+              libxkbcommon
+              vulkan-loader
             ];
+
+            LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath (with pkgs; [
+              wayland
+              libxkbcommon
+              vulkan-loader
+            ]);
 
             RUST_BACKTRACE = "1"; # panics become less opaque
           };

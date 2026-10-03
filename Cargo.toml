@@ -1,6 +1,17 @@
 [package]
-name = "spider"
+name = "ttyrantula"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+bytemuck = { version = "1.24", features = ["derive"] }
+glyphon = "0.12"
+pollster = "0.4"
+smithay-clipboard = "=0.7.2"
+wgpu = "30.0"
+winit = { version = "0.30.12", default-features = false, features = [
+  "rwh_06",
+  "wayland",
+  "wayland-csd-adwaita",
+  "wayland-dlopen",
+] }
