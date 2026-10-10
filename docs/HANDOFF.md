@@ -9,6 +9,8 @@ history, and hint presentation work on the development machine.
 
 ### Follow-up to-dos
 
+- Low priority: implement Stylix support for application theming.
+
 - Very low priority: add playful tarantula-themed visual flair, such as a
   subtle spider-web background. Keep text legible and the terminal visually
   calm; this is an aesthetic motif, not a biological accuracy requirement.
