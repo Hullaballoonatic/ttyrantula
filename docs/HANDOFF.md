@@ -86,16 +86,18 @@ Do not begin by replacing the mock UI. The trial currently stands here:
    PTY through the synchronous `TerminalSession` coordinator.
 5. [~] Establish non-blocking I/O scheduling so PTY reads cannot stall the
    window loop. The PTY boundary is now split into a blocking reader worker
-   and nonblocking control operations; Ghostty/channel ownership is next.
+   and nonblocking control operations. A terminal-core worker now owns
+   Ghostty, consumes that channel, and publishes snapshots/events; GUI wiring
+   and bounded mailbox policy remain.
 6. [ ] Render a conventional live terminal in the existing Wayland
    application.
 7. [ ] Translate semantic lifecycle events into Running and Completed Commands.
 8. [ ] Replace mock Command data with live semantic data only after the
    ordinary terminal path is correct.
 
-The next implementation slice is step 5: keep Ghostty state on one owner
-thread, move blocking PTY reads behind a channel, and ensure the GUI consumes
-bounded batches or latest snapshots rather than waiting on the child process.
+The next implementation slice is the remaining part of step 5: connect the
+worker's event channel to the GUI boundary and choose bounded-batch/latest-
+snapshot behavior so heavy output cannot flood the window loop.
 
 ## Intended Runtime Boundaries
 

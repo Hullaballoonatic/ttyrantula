@@ -8,6 +8,11 @@ use crate::{
     pty::{ExitStatus, PtyError, PtySession, Size},
     terminal::{GridSize, Snapshot, TerminalCore, TerminalError},
 };
+use std::{
+    sync::mpsc::{self, Receiver, RecvTimeoutError, Sender},
+    thread,
+    time::Duration,
+};
 
 /// Errors produced while routing PTY bytes through the terminal core.
 #[derive(Debug)]
@@ -37,6 +42,184 @@ impl From<TerminalError> for SessionError {
     fn from(error: TerminalError) -> Self {
         Self::Terminal(error)
     }
+}
+
+/// Commands sent by the GUI/application owner to the terminal worker.
+#[derive(Debug)]
+pub enum TerminalCommand {
+    Input(Vec<u8>),
+    Resize(Size),
+    Shutdown,
+}
+
+/// Events published by the terminal worker for the GUI/application owner.
+#[derive(Debug)]
+pub enum TerminalEvent {
+    Snapshot(Snapshot),
+    ChildExited(ExitStatus),
+    Error(SessionError),
+}
+
+/// Handle for sending commands without exposing PTY or Ghostty state.
+#[derive(Clone, Debug)]
+pub struct TerminalHandle {
+    commands: Sender<TerminalCommand>,
+}
+
+impl TerminalHandle {
+    /// Sends bytes to the child process.
+    pub fn input(&self, bytes: impl Into<Vec<u8>>) -> Result<(), SessionError> {
+        self.commands
+            .send(TerminalCommand::Input(bytes.into()))
+            .map_err(|error| SessionError::Pty(PtyError::Child(error.to_string())))
+    }
+
+    /// Resizes both the PTY and terminal grid.
+    pub fn resize(&self, size: Size) -> Result<(), SessionError> {
+        self.commands
+            .send(TerminalCommand::Resize(size))
+            .map_err(|error| SessionError::Pty(PtyError::Child(error.to_string())))
+    }
+
+    /// Requests an orderly worker shutdown.
+    pub fn shutdown(&self) -> Result<(), SessionError> {
+        self.commands
+            .send(TerminalCommand::Shutdown)
+            .map_err(|error| SessionError::Pty(PtyError::Child(error.to_string())))
+    }
+}
+
+/// Starts the terminal-core owner and returns its command/event channels.
+pub fn spawn_worker(
+    program: &str,
+    size: Size,
+) -> Result<(TerminalHandle, Receiver<TerminalEvent>), SessionError> {
+    let (reader, mut control) = PtySession::spawn(program, size)?.split();
+    let output = reader.spawn();
+    let (commands, command_receiver) = mpsc::channel();
+    let (event_sender, events) = mpsc::channel();
+
+    thread::spawn(move || {
+        let grid_size = match GridSize::new(size.columns, size.rows) {
+            Ok(grid_size) => grid_size,
+            Err(error) => {
+                let _ = event_sender.send(TerminalEvent::Error(SessionError::Terminal(error)));
+                return;
+            }
+        };
+        let terminal = match TerminalCore::new(grid_size) {
+            Ok(terminal) => terminal,
+            Err(error) => {
+                let _ = event_sender.send(TerminalEvent::Error(SessionError::Terminal(error)));
+                return;
+            }
+        };
+        terminal_worker(
+            terminal,
+            &mut control,
+            output,
+            command_receiver,
+            event_sender,
+        );
+    });
+
+    Ok((TerminalHandle { commands }, events))
+}
+
+fn terminal_worker(
+    mut terminal: TerminalCore,
+    control: &mut crate::pty::PtyControl,
+    output: Receiver<Result<Vec<u8>, PtyError>>,
+    commands: Receiver<TerminalCommand>,
+    events: Sender<TerminalEvent>,
+) {
+    if publish_snapshot(&mut terminal, &events).is_err() {
+        return;
+    }
+
+    loop {
+        match commands.recv_timeout(Duration::from_millis(10)) {
+            Ok(TerminalCommand::Input(bytes)) => {
+                if publish_result(control.write_input(&bytes), &events).is_err() {
+                    return;
+                }
+            }
+            Ok(TerminalCommand::Resize(size)) => {
+                if publish_result(control.resize(size), &events).is_err() {
+                    return;
+                }
+                let grid_size = match GridSize::new(size.columns, size.rows) {
+                    Ok(grid_size) => grid_size,
+                    Err(error) => {
+                        let _ = events.send(TerminalEvent::Error(SessionError::Terminal(error)));
+                        return;
+                    }
+                };
+                if publish_terminal_result(terminal.resize(grid_size), &events).is_err()
+                    || publish_snapshot(&mut terminal, &events).is_err()
+                {
+                    return;
+                }
+            }
+            Ok(TerminalCommand::Shutdown) | Err(RecvTimeoutError::Disconnected) => return,
+            Err(RecvTimeoutError::Timeout) => {}
+        }
+
+        match output.try_recv() {
+            Ok(Ok(bytes)) => {
+                terminal.write(&bytes);
+                if publish_snapshot(&mut terminal, &events).is_err() {
+                    return;
+                }
+            }
+            Ok(Err(error)) => {
+                let _ = events.send(TerminalEvent::Error(SessionError::Pty(error)));
+                return;
+            }
+            Err(mpsc::TryRecvError::Empty) => {}
+            Err(mpsc::TryRecvError::Disconnected) => return,
+        }
+
+        match control.try_wait() {
+            Ok(Some(status)) => {
+                let _ = events.send(TerminalEvent::ChildExited(status));
+                return;
+            }
+            Ok(None) => {}
+            Err(error) => {
+                let _ = events.send(TerminalEvent::Error(SessionError::Pty(error)));
+                return;
+            }
+        }
+    }
+}
+
+fn publish_snapshot(terminal: &mut TerminalCore, events: &Sender<TerminalEvent>) -> Result<(), ()> {
+    terminal
+        .snapshot()
+        .map(|snapshot| events.send(TerminalEvent::Snapshot(snapshot)))
+        .map_err(|error| {
+            let _ = events.send(TerminalEvent::Error(SessionError::Terminal(error)));
+        })?
+        .map_err(|_| ())
+}
+
+fn publish_result<T>(
+    result: Result<T, PtyError>,
+    events: &Sender<TerminalEvent>,
+) -> Result<(), ()> {
+    result.map(|_| ()).map_err(|error| {
+        let _ = events.send(TerminalEvent::Error(SessionError::Pty(error)));
+    })
+}
+
+fn publish_terminal_result(
+    result: Result<(), TerminalError>,
+    events: &Sender<TerminalEvent>,
+) -> Result<(), ()> {
+    result.map_err(|error| {
+        let _ = events.send(TerminalEvent::Error(SessionError::Terminal(error)));
+    })
 }
 
 /// Owns one child PTY and the terminal state that interprets its output.
@@ -119,6 +302,36 @@ mod tests {
             .join("\n");
         assert!(text.contains("ghostty-ok"));
         assert_eq!(status.code, Some(3));
+        assert!(!status.success);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn worker_owns_terminal_core_and_publishes_snapshots() {
+        let (handle, events) = spawn_worker("sh", Size::new(80, 24).unwrap()).unwrap();
+        handle
+            .input(b"printf 'threaded-ok'; exit 4\n".to_vec())
+            .unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut saw_output = false;
+        let status = loop {
+            assert!(Instant::now() < deadline, "worker did not finish");
+            match events.recv_timeout(Duration::from_millis(100)).unwrap() {
+                TerminalEvent::Snapshot(snapshot) => {
+                    saw_output |= snapshot
+                        .rows
+                        .iter()
+                        .map(crate::terminal::Row::text)
+                        .any(|row| row.contains("threaded-ok"));
+                }
+                TerminalEvent::ChildExited(status) => break status,
+                TerminalEvent::Error(error) => panic!("worker error: {error}"),
+            }
+        };
+
+        assert!(saw_output);
+        assert_eq!(status.code, Some(4));
         assert!(!status.success);
     }
 }
