@@ -9,7 +9,10 @@ use crate::{
     terminal::{GridSize, Snapshot, TerminalCore, TerminalError},
 };
 use std::{
-    sync::mpsc::{self, Receiver, RecvTimeoutError, Sender},
+    sync::{
+        Arc, Mutex,
+        mpsc::{self, Receiver, RecvTimeoutError, Sender},
+    },
     thread,
     time::Duration,
 };
@@ -55,9 +58,27 @@ pub enum TerminalCommand {
 /// Events published by the terminal worker for the GUI/application owner.
 #[derive(Debug)]
 pub enum TerminalEvent {
-    Snapshot(Snapshot),
     ChildExited(ExitStatus),
     Error(SessionError),
+}
+
+/// A latest-frame mailbox for GUI consumers.
+#[derive(Clone, Debug, Default)]
+pub struct SnapshotMailbox {
+    latest: Arc<Mutex<Option<Snapshot>>>,
+}
+
+impl SnapshotMailbox {
+    /// Takes the newest frame, dropping any older frame that was superseded.
+    pub fn take_latest(&self) -> Option<Snapshot> {
+        self.latest.lock().ok()?.take()
+    }
+
+    fn publish(&self, snapshot: Snapshot) {
+        if let Ok(mut latest) = self.latest.lock() {
+            *latest = Some(snapshot);
+        }
+    }
 }
 
 /// Handle for sending commands without exposing PTY or Ghostty state.
@@ -93,11 +114,13 @@ impl TerminalHandle {
 pub fn spawn_worker(
     program: &str,
     size: Size,
-) -> Result<(TerminalHandle, Receiver<TerminalEvent>), SessionError> {
+) -> Result<(TerminalHandle, SnapshotMailbox, Receiver<TerminalEvent>), SessionError> {
     let (reader, mut control) = PtySession::spawn(program, size)?.split();
     let output = reader.spawn();
     let (commands, command_receiver) = mpsc::channel();
     let (event_sender, events) = mpsc::channel();
+    let snapshots = SnapshotMailbox::default();
+    let worker_snapshots = snapshots.clone();
 
     thread::spawn(move || {
         let grid_size = match GridSize::new(size.columns, size.rows) {
@@ -119,11 +142,12 @@ pub fn spawn_worker(
             &mut control,
             output,
             command_receiver,
+            worker_snapshots,
             event_sender,
         );
     });
 
-    Ok((TerminalHandle { commands }, events))
+    Ok((TerminalHandle { commands }, snapshots, events))
 }
 
 fn terminal_worker(
@@ -131,9 +155,10 @@ fn terminal_worker(
     control: &mut crate::pty::PtyControl,
     output: Receiver<Result<Vec<u8>, PtyError>>,
     commands: Receiver<TerminalCommand>,
+    snapshots: SnapshotMailbox,
     events: Sender<TerminalEvent>,
 ) {
-    if publish_snapshot(&mut terminal, &events).is_err() {
+    if publish_snapshot(&mut terminal, &snapshots, &events).is_err() {
         return;
     }
 
@@ -156,7 +181,7 @@ fn terminal_worker(
                     }
                 };
                 if publish_terminal_result(terminal.resize(grid_size), &events).is_err()
-                    || publish_snapshot(&mut terminal, &events).is_err()
+                    || publish_snapshot(&mut terminal, &snapshots, &events).is_err()
                 {
                     return;
                 }
@@ -168,7 +193,7 @@ fn terminal_worker(
         match output.try_recv() {
             Ok(Ok(bytes)) => {
                 terminal.write(&bytes);
-                if publish_snapshot(&mut terminal, &events).is_err() {
+                if publish_snapshot(&mut terminal, &snapshots, &events).is_err() {
                     return;
                 }
             }
@@ -194,14 +219,17 @@ fn terminal_worker(
     }
 }
 
-fn publish_snapshot(terminal: &mut TerminalCore, events: &Sender<TerminalEvent>) -> Result<(), ()> {
+fn publish_snapshot(
+    terminal: &mut TerminalCore,
+    snapshots: &SnapshotMailbox,
+    events: &Sender<TerminalEvent>,
+) -> Result<(), ()> {
     terminal
         .snapshot()
-        .map(|snapshot| events.send(TerminalEvent::Snapshot(snapshot)))
+        .map(|snapshot| snapshots.publish(snapshot))
         .map_err(|error| {
             let _ = events.send(TerminalEvent::Error(SessionError::Terminal(error)));
-        })?
-        .map_err(|_| ())
+        })
 }
 
 fn publish_result<T>(
@@ -308,7 +336,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn worker_owns_terminal_core_and_publishes_snapshots() {
-        let (handle, events) = spawn_worker("sh", Size::new(80, 24).unwrap()).unwrap();
+        let (handle, snapshots, events) = spawn_worker("sh", Size::new(80, 24).unwrap()).unwrap();
         handle
             .input(b"printf 'threaded-ok'; exit 4\n".to_vec())
             .unwrap();
@@ -317,19 +345,28 @@ mod tests {
         let mut saw_output = false;
         let status = loop {
             assert!(Instant::now() < deadline, "worker did not finish");
-            match events.recv_timeout(Duration::from_millis(100)).unwrap() {
-                TerminalEvent::Snapshot(snapshot) => {
-                    saw_output |= snapshot
-                        .rows
-                        .iter()
-                        .map(crate::terminal::Row::text)
-                        .any(|row| row.contains("threaded-ok"));
-                }
-                TerminalEvent::ChildExited(status) => break status,
-                TerminalEvent::Error(error) => panic!("worker error: {error}"),
+            if let Some(snapshot) = snapshots.take_latest() {
+                saw_output |= snapshot
+                    .rows
+                    .iter()
+                    .map(crate::terminal::Row::text)
+                    .any(|row| row.contains("threaded-ok"));
+            }
+            match events.recv_timeout(Duration::from_millis(100)) {
+                Ok(TerminalEvent::ChildExited(status)) => break status,
+                Ok(TerminalEvent::Error(error)) => panic!("worker error: {error}"),
+                Err(RecvTimeoutError::Timeout) => continue,
+                Err(RecvTimeoutError::Disconnected) => panic!("worker disconnected"),
             }
         };
 
+        if let Some(snapshot) = snapshots.take_latest() {
+            saw_output |= snapshot
+                .rows
+                .iter()
+                .map(crate::terminal::Row::text)
+                .any(|row| row.contains("threaded-ok"));
+        }
         assert!(saw_output);
         assert_eq!(status.code, Some(4));
         assert!(!status.success);

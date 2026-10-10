@@ -74,9 +74,10 @@ The current trial uses pinned `portable-pty` 0.9.0 behind a small local
 `PtySession` boundary. It owns spawning, byte transport, resize, and child
 lifecycle without exposing portable-pty types to the rest of the application.
 The boundary is independently tested with a real shell process. A
-`TerminalSession` now owns one `PtySession` and one `TerminalCore`, routes each
-read PTY chunk through Ghostty, and applies writes and resizes to both sides.
-Renderer wiring remains a later step.
+`TerminalSession` provides the synchronous proof boundary, while the threaded
+worker path separates a blocking `PtyReader` from control operations, keeps
+Ghostty on one owner thread, and publishes latest-frame snapshots for GUI
+consumers. Renderer wiring remains a later step.
 
 ## Terminal Core
 
