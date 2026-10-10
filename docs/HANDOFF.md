@@ -9,6 +9,10 @@ history, and hint presentation work on the development machine.
 
 ### Follow-up to-dos
 
+- Very low priority: add playful tarantula-themed visual flair, such as a
+  subtle spider-web background. Keep text legible and the terminal visually
+  calm; this is an aesthetic motif, not a biological accuracy requirement.
+
 - Dogfooding prerequisites: reliable full-screen handoff for Neovim and
   terminal-based Codex, plus built-in multiplexing inspired by Herdr.
 - Add a sidebar showing sessions, ongoing processes, and agent state;
