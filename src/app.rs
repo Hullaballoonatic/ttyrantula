@@ -2,6 +2,7 @@ use crate::renderer::Renderer;
 use std::{
     error::Error,
     sync::{Arc, mpsc::Receiver},
+    time::{Duration, Instant},
 };
 use ttyrantula::{
     clipboard::SystemClipboard,
@@ -22,7 +23,7 @@ use winit::{
     application::ApplicationHandler,
     dpi::{LogicalSize, PhysicalSize},
     event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent},
-    event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy},
+    event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy},
     keyboard::{Key, ModifiersState, NamedKey},
     window::{CursorIcon, Window, WindowId},
 };
@@ -392,8 +393,11 @@ impl Application {
 }
 
 impl ApplicationHandler<UserEvent> for Application {
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         self.poll_terminal();
+        event_loop.set_control_flow(ControlFlow::WaitUntil(
+            Instant::now() + Duration::from_millis(16),
+        ));
     }
 
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
