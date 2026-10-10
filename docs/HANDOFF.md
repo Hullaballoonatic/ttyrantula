@@ -108,6 +108,14 @@ the mock command UI prematurely.
 
 ### Next semantic integration checkpoint
 
+Hints are now enabled with a controlled dim style. Composer input and hint
+suffix are separate fields, drawn as normal text over a gray suggestion.
+Right Arrow accepts hints through Nushell's default binding. History uses an
+isolated temporary configuration directory per session so commands entered
+in this session can provide hints without loading personal history or Atuin.
+The real Nushell regression verifies hint separation, Right Arrow acceptance,
+and execution of the accepted command.
+
 Composer projection now preserves trailing spaces up to the shell cursor.
 The development Nushell session disables `show_hints` because the current
 plain-text projection cannot distinguish inline suggestions from submitted

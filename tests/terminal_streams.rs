@@ -2,6 +2,15 @@ use ttyrantula::terminal::{
     CellWidth, GridSize, RgbColor, ScreenKind, SemanticContent, TerminalCore,
 };
 
+#[test]
+fn composer_separates_hint_suffix_from_actual_input() {
+    let mut terminal = TerminalCore::new(GridSize::new(80, 24).unwrap()).unwrap();
+    terminal.write(b"\x1b]133;A\x07nu> \x1b]133;B\x07l\x1b[2;38;2;128;128;128ms\x1b[0m\x1b[1D");
+    let snapshot = terminal.snapshot().unwrap();
+    assert_eq!(snapshot.composer_input().as_deref(), Some("l"));
+    assert_eq!(snapshot.composer_hint(), "s");
+}
+
 fn terminal(columns: u16, rows: u16) -> TerminalCore {
     TerminalCore::new(GridSize::new(columns, rows).unwrap()).unwrap()
 }

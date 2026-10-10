@@ -156,6 +156,7 @@ impl Snapshot {
                     .enumerate()
                     .filter(|(_, cell)| {
                         cell.semantic_content == SemanticContent::Input
+                            && !cell.style.faint
                             && !cell.text.trim().is_empty()
                     })
                     .map(|(index, _)| index + 1)
@@ -164,10 +165,29 @@ impl Snapshot {
                     .max(usize::from(cursor.column));
                 row.cells[..end.min(row.cells.len())]
                     .iter()
-                    .filter(|cell| cell.semantic_content == SemanticContent::Input)
+                    .filter(|cell| {
+                        cell.semantic_content == SemanticContent::Input && !cell.style.faint
+                    })
                     .map(|cell| cell.text.as_str())
                     .collect::<String>()
             })
+    }
+
+    /// Suggested suffix distinguished by our controlled Nushell hint style.
+    #[must_use]
+    pub fn composer_hint(&self) -> String {
+        self.cursor
+            .and_then(|cursor| self.rows.get(usize::from(cursor.row)))
+            .map(|row| {
+                row.cells
+                    .iter()
+                    .filter(|cell| {
+                        cell.semantic_content == SemanticContent::Input && cell.style.faint
+                    })
+                    .map(|cell| cell.text.as_str())
+                    .collect::<String>()
+            })
+            .unwrap_or_default()
     }
 }
 

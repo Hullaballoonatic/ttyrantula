@@ -215,6 +215,14 @@ components exist rather than as empty placeholders.
 
 ## Input Routing
 
+The Composer model separates actual shell input from its suggested suffix.
+The controlled Nushell session emits hints using a dim style, which the
+terminal adapter projects separately from input cells. Presentation draws
+suggestions in gray beneath the normal input. Right Arrow is forwarded to
+Nushell's default history-hint acceptance binding; only accepted text becomes
+command input. Development history is isolated per session using a temporary
+configuration directory rather than the user's personal history.
+
 Window-system keyboard events are normalized before the application interprets
 them. A centralized, context-aware keymap translates key chords into
 application actions. Printable Composer text remains a separate input path so

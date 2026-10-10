@@ -126,12 +126,22 @@ pub fn spawn_worker(
     program: &str,
     size: Size,
 ) -> Result<(TerminalHandle, SnapshotMailbox, Receiver<TerminalEvent>), SessionError> {
+    let history_home = if program == "nu" {
+        Some(IsolatedHistory::new()?)
+    } else {
+        None
+    };
+    let config_home = history_home
+        .as_ref()
+        .map(|history| history.0.to_string_lossy().into_owned())
+        .unwrap_or_default();
     let args: &[&str] = if program == "nu" {
         &[
             "--no-config-file",
-            "--no-history",
+            "--config-home",
+            &config_home,
             "--execute",
-            "$env.config.show_hints = false",
+            "$env.config.use_ansi_coloring = true; $env.config.show_hints = true; $env.config.color_config.hints = {fg: '#808080', attr: d}",
         ]
     } else {
         &[]
@@ -144,6 +154,7 @@ pub fn spawn_worker(
     let worker_snapshots = snapshots.clone();
 
     thread::spawn(move || {
+        let _history_home = history_home;
         let grid_size = match GridSize::new(size.columns, size.rows) {
             Ok(grid_size) => grid_size,
             Err(error) => {
@@ -169,6 +180,29 @@ pub fn spawn_worker(
     });
 
     Ok((TerminalHandle { commands }, snapshots, events))
+}
+
+struct IsolatedHistory(std::path::PathBuf);
+
+impl IsolatedHistory {
+    fn new() -> Result<Self, PtyError> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "ttyrantula-history-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir(&path).map_err(|error| PtyError::Child(error.to_string()))?;
+        Ok(Self(path))
+    }
+}
+
+impl Drop for IsolatedHistory {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(self.0.join("history.txt"));
+        let _ = std::fs::remove_dir(&self.0);
+    }
 }
 
 fn terminal_worker(
@@ -464,6 +498,54 @@ mod tests {
                     exit_status,
                 } => {
                     assert!(started);
+                    assert_eq!(output, "history-visible");
+                    assert_eq!(exit_status, Some(0));
+                    break;
+                }
+                TerminalEvent::Error(error) => panic!("{error}"),
+                _ => {}
+            }
+        }
+        handle.input(b"print h".to_vec()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut debug_input = String::new();
+        loop {
+            if let Some(snapshot) = snapshots.take_latest() {
+                debug_input = format!(
+                    "input={:?} hint={:?}",
+                    snapshot.composer_input(),
+                    snapshot.composer_hint()
+                );
+                if snapshot.composer_input().as_deref() == Some("print h")
+                    && snapshot.composer_hint() == "istory-visible"
+                {
+                    break;
+                }
+            }
+            assert!(Instant::now() < deadline, "hint missing {debug_input}");
+            thread::sleep(Duration::from_millis(20));
+        }
+        handle.input(b"\x1b[C".to_vec()).unwrap();
+        loop {
+            if let Some(snapshot) = snapshots.take_latest()
+                && snapshot.composer_input().as_deref() == Some("print history-visible")
+                && snapshot.composer_hint().is_empty()
+            {
+                break;
+            }
+            assert!(Instant::now() < deadline, "hint not accepted");
+            thread::sleep(Duration::from_millis(20));
+        }
+        handle.input(b"\r".to_vec()).unwrap();
+        loop {
+            match events.recv_timeout(Duration::from_secs(3)).unwrap() {
+                TerminalEvent::CommandStarted { input } => {
+                    assert_eq!(input, "print history-visible")
+                }
+                TerminalEvent::CommandCompleted {
+                    output,
+                    exit_status,
+                } => {
                     assert_eq!(output, "history-visible");
                     assert_eq!(exit_status, Some(0));
                     break;

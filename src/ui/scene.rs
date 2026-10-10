@@ -351,6 +351,19 @@ fn composer_text(
             TextWeight::Semibold,
         ),
         text(
+            format!("{}{}", session.composer.input, session.composer.hint),
+            rect(
+                metrics.dip(53.0),
+                top + metrics.dip(57.0),
+                metrics.width - metrics.dip(80.0),
+                metrics.dip(30.0),
+            ),
+            TEXT_MUTED,
+            metrics.dip(16.0),
+            metrics.dip(25.0),
+            TextWeight::Normal,
+        ),
+        text(
             if ui.focus == UiFocus::Composer {
                 format!("{}▏", session.composer.input)
             } else {

@@ -110,6 +110,7 @@ impl PtySession {
     pub fn spawn_with_args(program: &str, args: &[&str], size: Size) -> Result<Self, PtyError> {
         let mut command = CommandBuilder::new(program);
         command.args(args);
+        command.env("TERM", "xterm-256color");
         let pty_system = native_pty_system();
         let pair = pty_system
             .openpty(size.into_pty_size())

@@ -115,6 +115,7 @@ impl Application {
         {
             if let Some(input) = snapshot.composer_input() {
                 self.session.composer.input = input;
+                self.session.composer.hint = snapshot.composer_hint();
             }
             self.terminal_snapshot = Some(snapshot);
             self.request_redraw();
@@ -142,6 +143,7 @@ impl Application {
                         state: ttyrantula::model::CommandState::Running,
                     });
                     self.session.composer.input.clear();
+                    self.session.composer.hint.clear();
                     self.ui = UiState::for_session(&self.session);
                 }
                 TerminalEvent::CommandOutput { output } => {

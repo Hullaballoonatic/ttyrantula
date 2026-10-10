@@ -5,6 +5,7 @@ use super::{Command, CommandId, CommandState, Metadata};
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Composer {
     pub input: String,
+    pub hint: String,
     pub working_directory: String,
     pub branch: Option<String>,
 }
@@ -66,6 +67,7 @@ impl Session {
                 },
             ],
             composer: Composer {
+                hint: String::new(),
                 input: "cargo test --".into(),
                 working_directory: "~/Projects/ttyrantula".into(),
                 branch: Some("main".into()),
