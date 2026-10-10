@@ -4,6 +4,18 @@ Updated: 2026-10-10
 
 ## Current State
 
+User-verified milestone: the Composer, Nushell command execution, live command
+history, and hint presentation work on the development machine.
+
+### Follow-up to-dos
+
+- Support selecting and running different shells, with appropriate semantic
+  integration and fallback behavior for each.
+- Track the active shell, including changes within an existing session, and
+  display its name before the current working directory in the Composer.
+- Investigate GUI presentation of Nushell's structured tables; this is an
+  open design question, not an implementation commitment.
+
 Ttyrantula is an experimental graphical terminal emulator written in Rust for
 Linux/Wayland. Its defining feature is semantic command presentation: ordinary
 shell commands and their output become graphical Command blocks, while

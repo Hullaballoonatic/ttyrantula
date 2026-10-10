@@ -10,6 +10,10 @@ questions.
 
 ## UI
 
+- Should Nushell structured tables have a native GUI presentation? If so,
+  how should structured data reach the renderer while preserving conventional
+  terminal output, copying, and behavior across different shells?
+
 - What exact visual distinction should exist between Input and Output?
 - Should Command blocks have rounded corners?
 - What spacing should exist between historical Commands?
