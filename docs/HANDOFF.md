@@ -92,7 +92,8 @@ Do not begin by replacing the mock UI. The trial currently stands here:
 6. [~] Render a conventional live terminal in the existing Wayland
    application. The application now starts the shell worker, polls the latest
    snapshot during `about_to_wait`, and renders terminal rows in the history
-   viewport; input routing, resize propagation, and final layout remain.
+   viewport. Keyboard input now routes to the PTY; resize propagation and
+   final layout remain.
 7. [ ] Translate semantic lifecycle events into Running and Completed Commands.
 8. [ ] Replace mock Command data with live semantic data only after the
    ordinary terminal path is correct.

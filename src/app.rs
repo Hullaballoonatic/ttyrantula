@@ -47,7 +47,7 @@ struct Application {
     modifiers: ModifiersState,
     key_sequence: KeySequenceState,
     event_proxy: EventLoopProxy<UserEvent>,
-    _terminal_handle: Option<TerminalHandle>,
+    terminal_handle: Option<TerminalHandle>,
     terminal_snapshots: Option<SnapshotMailbox>,
     terminal_events: Option<Receiver<TerminalEvent>>,
     terminal_snapshot: Option<Snapshot>,
@@ -76,7 +76,7 @@ impl Application {
             modifiers: ModifiersState::default(),
             key_sequence: KeySequenceState::default(),
             event_proxy,
-            _terminal_handle: terminal.as_ref().map(|(handle, _, _)| handle.clone()),
+            terminal_handle: terminal.as_ref().map(|(handle, _, _)| handle.clone()),
             terminal_snapshots: terminal.as_ref().map(|(_, snapshots, _)| snapshots.clone()),
             terminal_events: terminal.map(|(_, _, events)| events),
             terminal_snapshot: None,
@@ -220,6 +220,15 @@ impl Application {
 
     fn handle_keyboard_input(&mut self, event: KeyEvent) {
         if event.state != ElementState::Pressed {
+            return;
+        }
+
+        if let Some(bytes) = terminal_input_bytes(&event, self.modifiers)
+            && let Some(handle) = &self.terminal_handle
+        {
+            if let Err(error) = handle.input(bytes) {
+                eprintln!("terminal input failed: {error}");
+            }
             return;
         }
 
@@ -498,4 +507,38 @@ fn normalized_character(value: &str) -> Option<InputKey> {
     let character = characters.next()?;
     (characters.next().is_none() && !character.is_control())
         .then_some(InputKey::Character(character.to_ascii_lowercase()))
+}
+
+fn terminal_input_bytes(event: &KeyEvent, modifiers: ModifiersState) -> Option<Vec<u8>> {
+    let mut bytes = if modifiers.control_key() {
+        match &event.logical_key {
+            Key::Character(value) => value
+                .chars()
+                .next()
+                .map(|character| vec![character.to_ascii_lowercase() as u8 & 0x1f]),
+            _ => None,
+        }
+    } else if let Some(text) = event.text.as_deref().filter(|text| !text.is_empty()) {
+        Some(text.as_bytes().to_vec())
+    } else {
+        match event.logical_key {
+            Key::Named(NamedKey::Enter) => Some(vec![b'\r']),
+            Key::Named(NamedKey::Backspace) => Some(vec![0x7f]),
+            Key::Named(NamedKey::Tab) => Some(vec![b'\t']),
+            Key::Named(NamedKey::Escape) => Some(vec![0x1b]),
+            Key::Named(NamedKey::ArrowUp) => Some(b"\x1b[A".to_vec()),
+            Key::Named(NamedKey::ArrowDown) => Some(b"\x1b[B".to_vec()),
+            Key::Named(NamedKey::ArrowRight) => Some(b"\x1b[C".to_vec()),
+            Key::Named(NamedKey::ArrowLeft) => Some(b"\x1b[D".to_vec()),
+            Key::Named(NamedKey::Home) => Some(b"\x1b[H".to_vec()),
+            Key::Named(NamedKey::End) => Some(b"\x1b[F".to_vec()),
+            Key::Named(NamedKey::Delete) => Some(b"\x1b[3~".to_vec()),
+            _ => None,
+        }
+    }?;
+
+    if modifiers.alt_key() {
+        bytes.insert(0, 0x1b);
+    }
+    Some(bytes)
 }
