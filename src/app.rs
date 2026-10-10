@@ -20,7 +20,7 @@ use ttyrantula::{
 };
 use winit::{
     application::ApplicationHandler,
-    dpi::LogicalSize,
+    dpi::{LogicalSize, PhysicalSize},
     event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent},
     event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy},
     keyboard::{Key, ModifiersState, NamedKey},
@@ -118,6 +118,23 @@ impl Application {
                 }
                 TerminalEvent::Error(error) => eprintln!("terminal worker failed: {error}"),
             }
+        }
+    }
+
+    fn resize_terminal(&self, size: PhysicalSize<u32>) {
+        let Some(handle) = &self.terminal_handle else {
+            return;
+        };
+        let columns = (size.width / 8).clamp(1, u16::MAX as u32) as u16;
+        let rows = (size.height / 18).clamp(1, u16::MAX as u32) as u16;
+        let terminal_size = Size {
+            columns,
+            rows,
+            pixel_width: size.width.min(u16::MAX as u32) as u16,
+            pixel_height: size.height.min(u16::MAX as u32) as u16,
+        };
+        if let Err(error) = handle.resize(terminal_size) {
+            eprintln!("terminal resize failed: {error}");
         }
     }
 
@@ -401,6 +418,7 @@ impl ApplicationHandler<UserEvent> for Application {
 
         match initialized {
             Ok((renderer, clipboard)) => {
+                self.resize_terminal(renderer.window().inner_size());
                 renderer.window().request_redraw();
                 self.clipboard = Some(clipboard);
                 self.renderer = Some(renderer);
@@ -433,9 +451,11 @@ impl ApplicationHandler<UserEvent> for Application {
                     renderer.resize(size);
                     renderer.window().request_redraw();
                 }
+                self.resize_terminal(size);
             }
             WindowEvent::ScaleFactorChanged { .. } => {
                 if let Some(renderer) = &self.renderer {
+                    self.resize_terminal(renderer.window().inner_size());
                     renderer.window().request_redraw();
                 }
             }

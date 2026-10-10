@@ -371,4 +371,40 @@ mod tests {
         assert_eq!(status.code, Some(4));
         assert!(!status.success);
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn worker_resize_updates_pty_and_terminal_grid() {
+        let (handle, snapshots, events) = spawn_worker("sh", Size::new(80, 24).unwrap()).unwrap();
+        handle
+            .resize(Size {
+                columns: 100,
+                rows: 30,
+                pixel_width: 800,
+                pixel_height: 600,
+            })
+            .unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let resized = loop {
+            assert!(Instant::now() < deadline, "worker did not publish resize");
+            if let Some(snapshot) = snapshots.take_latest()
+                && snapshot.size
+                    == (crate::terminal::GridSize {
+                        columns: 100,
+                        rows: 30,
+                    })
+            {
+                break true;
+            }
+            match events.recv_timeout(Duration::from_millis(20)) {
+                Ok(TerminalEvent::Error(error)) => panic!("worker error: {error}"),
+                Ok(TerminalEvent::ChildExited(_)) => break false,
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => break false,
+            }
+        };
+        handle.shutdown().unwrap();
+        assert!(resized);
+    }
 }
