@@ -115,7 +115,12 @@ pub fn spawn_worker(
     program: &str,
     size: Size,
 ) -> Result<(TerminalHandle, SnapshotMailbox, Receiver<TerminalEvent>), SessionError> {
-    let (reader, mut control) = PtySession::spawn(program, size)?.split();
+    let args: &[&str] = if program == "nu" {
+        &["--no-config-file", "--no-history"]
+    } else {
+        &[]
+    };
+    let (reader, mut control) = PtySession::spawn_with_args(program, args, size)?.split();
     let output = reader.spawn();
     let (commands, command_receiver) = mpsc::channel();
     let (event_sender, events) = mpsc::channel();
@@ -321,24 +326,34 @@ mod tests {
     #[test]
     fn nushell_typing_is_visible_in_composer() {
         let (handle, snapshots, _) = spawn_worker("nu", Size::new(80, 24).unwrap()).unwrap();
-        std::thread::sleep(Duration::from_millis(500));
-        handle.input(b"print composer-visible".to_vec()).unwrap();
-        let deadline = Instant::now() + Duration::from_secs(3);
-        let mut latest = None;
-        loop {
-            if let Some(snapshot) = snapshots.take_latest() {
-                if snapshot.composer_input().as_deref() == Some("print composer-visible") {
-                    handle.input(b"\x03exit\r".to_vec()).unwrap();
-                    return;
+        for (bytes, expected) in [
+            (b"".as_slice(), ""),
+            (b"p".as_slice(), "p"),
+            (b"r".as_slice(), "pr"),
+            (b"\x7f".as_slice(), "p"),
+            (
+                b"rint composer-visible".as_slice(),
+                "print composer-visible",
+            ),
+        ] {
+            handle.input(bytes.to_vec()).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(3);
+            let mut latest = None;
+            loop {
+                if let Some(snapshot) = snapshots.take_latest() {
+                    latest = snapshot.composer_input();
+                    if latest.as_deref() == Some(expected) {
+                        break;
+                    }
                 }
-                latest = snapshot.composer_input();
+                assert!(
+                    Instant::now() < deadline,
+                    "expected {expected:?}, got {latest:?}"
+                );
+                std::thread::sleep(Duration::from_millis(20));
             }
-            assert!(
-                Instant::now() < deadline,
-                "Nushell input missing: {latest:?}"
-            );
-            std::thread::sleep(Duration::from_millis(20));
         }
+        handle.input(b"\x03exit\r".to_vec()).unwrap();
     }
 
     #[cfg(unix)]

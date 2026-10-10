@@ -248,15 +248,6 @@ impl Application {
             return;
         }
 
-        if let Some(bytes) = terminal_input_bytes(&event, self.modifiers)
-            && let Some(handle) = &self.terminal_handle
-        {
-            if let Err(error) = handle.input(bytes) {
-                eprintln!("terminal input failed: {error}");
-            }
-            return;
-        }
-
         if event.repeat && self.key_sequence.is_pending() {
             return;
         }
@@ -306,6 +297,15 @@ impl Application {
         }
 
         if self.ui.focus != UiFocus::Composer {
+            return;
+        }
+
+        if let Some(handle) = &self.terminal_handle {
+            if let Some(bytes) = terminal_input_bytes(&event, self.modifiers)
+                && let Err(error) = handle.input(bytes)
+            {
+                eprintln!("terminal input failed: {error}");
+            }
             return;
         }
 

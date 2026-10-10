@@ -108,6 +108,12 @@ the mock command UI prematurely.
 
 ### Next semantic integration checkpoint
 
+During development, Nushell starts with `--no-config-file --no-history` to
+avoid personal startup hooks (including Atuin) and personal history. No user
+configuration files are changed. The real Nushell regression checks exact
+Composer text after individual letters and Backspace. Application keybindings
+now run before PTY input routing, and history focus suppresses shell typing.
+
 The application now launches `nu` instead of `sh`. The Composer projects
 shell-owned input cells from the active cursor row using Ghostty's OSC 133
 classifications; typing and editing continue to go to Nushell. Integrated

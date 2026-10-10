@@ -103,13 +103,20 @@ pub struct PtyControl {
 impl PtySession {
     /// Spawns `program` attached to a native PTY.
     pub fn spawn(program: &str, size: Size) -> Result<Self, PtyError> {
+        Self::spawn_with_args(program, &[], size)
+    }
+
+    /// Spawns a program with explicit arguments attached to a native PTY.
+    pub fn spawn_with_args(program: &str, args: &[&str], size: Size) -> Result<Self, PtyError> {
+        let mut command = CommandBuilder::new(program);
+        command.args(args);
         let pty_system = native_pty_system();
         let pair = pty_system
             .openpty(size.into_pty_size())
             .map_err(|error| PtyError::Child(error.to_string()))?;
         let child = pair
             .slave
-            .spawn_command(CommandBuilder::new(program))
+            .spawn_command(command)
             .map_err(|error| PtyError::Child(error.to_string()))?;
         drop(pair.slave);
 
