@@ -106,6 +106,19 @@ the mock command UI prematurely.
 
 ## Intended Runtime Boundaries
 
+### Next semantic integration checkpoint
+
+Use Nushell for the initial semantic shell integration, as agreed with the
+user. Nushell is installed locally; choosing other shells can follow later.
+The conventional shell surface is a temporary proof and fallback, not the
+intended ordinary-command presentation. Present shell-owned editable input
+in the Composer and translate shell lifecycle/output information into live
+Command history. Preserve shell editing, completion, and history behavior.
+Correct resize geometry to use the actual terminal viewport and font cell
+metrics rather than the whole window and guessed dimensions.
+
+Do not consider step 6 complete until this presentation path is verified.
+
 The safe Rust wrapper's Ghostty objects are not `Send` or `Sync`. The proposed
 initial concurrency model is:
 
