@@ -1,9 +1,15 @@
 {
   description = "Rust development shell";
 
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    ghostty = {
+      url = "github:ghostty-org/ghostty/a887df42c56f6de86c0fe6da9c4eeca37931e083";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+  };
 
-  outputs = { nixpkgs, ... }:
+  outputs = { ghostty, nixpkgs, ... }:
     let
       systems = [
         "x86_64-linux"
@@ -14,6 +20,10 @@
 
       forAllSystems = nixpkgs.lib.genAttrs systems;
     in {
+      packages = forAllSystems (system: {
+        libghostty-vt = ghostty.packages.${system}.libghostty-vt;
+      });
+
       devShells = forAllSystems (system:
         let
           pkgs = import nixpkgs { inherit system; };
@@ -28,6 +38,7 @@
               clippy
               rustfmt
               pkg-config
+              ghostty.packages.${system}.libghostty-vt
               openssl
               wayland
               libxkbcommon
