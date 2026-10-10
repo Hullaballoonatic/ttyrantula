@@ -102,3 +102,17 @@ fn plain_text_remains_available_without_semantic_sequences() {
 
     assert_eq!(row_text(&mut core, 0), "ordinary");
 }
+#[test]
+fn composer_projects_shell_edited_input_without_prompt() {
+    let mut terminal = TerminalCore::new(GridSize::new(80, 24).unwrap()).unwrap();
+    terminal.write(b"\x1b]133;A\x07nu> \x1b]133;B\x07print hello");
+    assert_eq!(
+        terminal.snapshot().unwrap().composer_input().as_deref(),
+        Some("print hello")
+    );
+    terminal.write(b"\x08 \x08");
+    assert_eq!(
+        terminal.snapshot().unwrap().composer_input().as_deref(),
+        Some("print hell")
+    );
+}

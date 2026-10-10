@@ -56,11 +56,12 @@ struct Application {
 
 impl Application {
     fn new(event_proxy: EventLoopProxy<UserEvent>) -> Self {
-        let session = Session::prototype();
+        let mut session = Session::prototype();
+        session.composer.input.clear();
         let ui = UiState::for_session(&session);
         let terminal = Size::new(80, 24)
             .ok()
-            .and_then(|size| match spawn_worker("sh", size) {
+            .and_then(|size| match spawn_worker("nu", size) {
                 Ok((handle, snapshots, events)) => Some((handle, snapshots, events)),
                 Err(error) => {
                     eprintln!("failed to start terminal worker: {error}");
@@ -94,7 +95,10 @@ impl Application {
                 size.height,
                 renderer.window().scale_factor() as f32,
             );
-            if let Some(snapshot) = &self.terminal_snapshot {
+            if let Some(snapshot) = &self.terminal_snapshot
+                && (snapshot.screen == ttyrantula::terminal::ScreenKind::Alternate
+                    || snapshot.composer_input().is_none())
+            {
                 append_terminal_snapshot(&mut scene, snapshot);
             }
             scene
@@ -105,6 +109,9 @@ impl Application {
         if let Some(mailbox) = &self.terminal_snapshots
             && let Some(snapshot) = mailbox.take_latest()
         {
+            if let Some(input) = snapshot.composer_input() {
+                self.session.composer.input = input;
+            }
             self.terminal_snapshot = Some(snapshot);
             self.request_redraw();
         }
@@ -512,7 +519,14 @@ impl ApplicationHandler<UserEvent> for Application {
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: UserEvent) {
         match event {
             UserEvent::ClipboardText(Ok(text)) => {
-                self.session = self.session.with_composer_text(&text);
+                if let Some(handle) = &self.terminal_handle {
+                    let bytes = format!("\x1b[200~{text}\x1b[201~").into_bytes();
+                    if let Err(error) = handle.input(bytes) {
+                        eprintln!("terminal paste failed: {error}");
+                    }
+                } else {
+                    self.session = self.session.with_composer_text(&text);
+                }
                 self.request_redraw();
             }
             UserEvent::ClipboardText(Err(error)) => {

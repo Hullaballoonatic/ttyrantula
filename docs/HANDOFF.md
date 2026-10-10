@@ -108,6 +108,16 @@ the mock command UI prematurely.
 
 ### Next semantic integration checkpoint
 
+The application now launches `nu` instead of `sh`. The Composer projects
+shell-owned input cells from the active cursor row using Ghostty's OSC 133
+classifications; typing and editing continue to go to Nushell. Integrated
+prompt/input rows are no longer overlaid on history as a conventional shell.
+The conventional view remains during output, alternate-screen applications,
+or missing prompt classification. Paste is forwarded as bracketed PTY input.
+This first projection handles single-row input only: multiline input,
+completion presentation, cursor rendering, and live command history are
+still required. Mock history has not yet been replaced.
+
 Use Nushell for the initial semantic shell integration, as agreed with the
 user. Nushell is installed locally; choosing other shells can follow later.
 The conventional shell surface is a temporary proof and fallback, not the

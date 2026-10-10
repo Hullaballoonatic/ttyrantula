@@ -140,6 +140,26 @@ pub struct Snapshot {
     pub rows: Vec<Row>,
 }
 
+impl Snapshot {
+    /// Reads the shell-owned input on the active cursor row.
+    #[must_use]
+    pub fn composer_input(&self) -> Option<String> {
+        let row = self.rows.get(usize::from(self.cursor?.row))?;
+        row.cells
+            .iter()
+            .any(|cell| cell.semantic_content == SemanticContent::Prompt)
+            .then(|| {
+                row.cells
+                    .iter()
+                    .filter(|cell| cell.semantic_content == SemanticContent::Input)
+                    .map(|cell| cell.text.as_str())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_owned()
+            })
+    }
+}
+
 /// Errors at the local terminal-core boundary.
 #[derive(Debug)]
 pub enum TerminalError {
