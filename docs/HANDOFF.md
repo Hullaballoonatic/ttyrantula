@@ -108,6 +108,17 @@ the mock command UI prematurely.
 
 ### Next semantic integration checkpoint
 
+Live command history now replaces the application mock entries. The worker
+observes OSC 133 in byte order, emits command-start/output/completion events,
+and uses a separate Ghostty core to render each command's output as plain
+text. The GUI creates Running entries and completes them with exit status.
+A real Nushell test verifies command text, output, and successful completion.
+Current limits: captured output is limited to the command capture viewport
+(scrollback capture is still required); metadata starts at the application's
+working directory and does not yet follow `cd`; durations are not recorded;
+output styles are plain text. Do not treat the earlier checklist as complete
+terminal behavior. These limitations remain follow-up work.
+
 During development, Nushell starts with `--no-config-file --no-history` to
 avoid personal startup hooks (including Atuin) and personal history. No user
 configuration files are changed. The real Nushell regression checks exact

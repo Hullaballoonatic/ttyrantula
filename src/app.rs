@@ -57,7 +57,12 @@ struct Application {
 impl Application {
     fn new(event_proxy: EventLoopProxy<UserEvent>) -> Self {
         let mut session = Session::prototype();
+        session.commands.clear();
         session.composer.input.clear();
+        session.composer.working_directory = std::env::current_dir()
+            .map(|path| path.display().to_string())
+            .unwrap_or_default();
+        session.composer.branch = None;
         let ui = UiState::for_session(&session);
         let terminal = Size::new(80, 24)
             .ok()
@@ -96,8 +101,7 @@ impl Application {
                 renderer.window().scale_factor() as f32,
             );
             if let Some(snapshot) = &self.terminal_snapshot
-                && (snapshot.screen == ttyrantula::terminal::ScreenKind::Alternate
-                    || snapshot.composer_input().is_none())
+                && snapshot.screen == ttyrantula::terminal::ScreenKind::Alternate
             {
                 append_terminal_snapshot(&mut scene, snapshot);
             }
@@ -121,12 +125,45 @@ impl Application {
         };
         while let Ok(event) = events.try_recv() {
             match event {
+                TerminalEvent::CommandStarted { input } => {
+                    let id = CommandId(self.session.commands.len());
+                    self.session.commands.push(ttyrantula::model::Command {
+                        id,
+                        input,
+                        output: String::new(),
+                        metadata: ttyrantula::model::Metadata {
+                            working_directory: self.session.composer.working_directory.clone(),
+                            branch: None,
+                        },
+                        duration: None,
+                        state: ttyrantula::model::CommandState::Running,
+                    });
+                    self.session.composer.input.clear();
+                    self.ui = UiState::for_session(&self.session);
+                }
+                TerminalEvent::CommandOutput { output } => {
+                    if let Some(command) = self.session.commands.last_mut() {
+                        command.output = output;
+                    }
+                }
+                TerminalEvent::CommandCompleted {
+                    output,
+                    exit_status,
+                } => {
+                    if let Some(command) = self.session.commands.last_mut() {
+                        command.output = output;
+                        command.state = ttyrantula::model::CommandState::Completed {
+                            exit_status: exit_status.unwrap_or(-1),
+                        };
+                    }
+                }
                 TerminalEvent::ChildExited(status) => {
                     eprintln!("terminal child exited with {:?}", status.code);
                 }
                 TerminalEvent::Error(error) => eprintln!("terminal worker failed: {error}"),
             }
         }
+        self.request_redraw();
     }
 
     fn resize_terminal(&self, size: PhysicalSize<u32>) {

@@ -58,6 +58,16 @@ pub enum TerminalCommand {
 /// Events published by the terminal worker for the GUI/application owner.
 #[derive(Debug)]
 pub enum TerminalEvent {
+    CommandStarted {
+        input: String,
+    },
+    CommandOutput {
+        output: String,
+    },
+    CommandCompleted {
+        output: String,
+        exit_status: Option<i32>,
+    },
     ChildExited(ExitStatus),
     Error(SessionError),
 }
@@ -167,10 +177,16 @@ fn terminal_worker(
         return;
     }
     let mut child_status = None;
+    let mut decoder = crate::semantic::SemanticDecoder::default();
+    let mut command_terminal: Option<TerminalCore> = None;
+    let mut command_input = String::new();
 
     loop {
         match commands.recv_timeout(Duration::from_millis(10)) {
             Ok(TerminalCommand::Input(bytes)) => {
+                if let Some(input) = terminal.snapshot().ok().and_then(|s| s.composer_input()) {
+                    command_input = input;
+                }
                 if publish_result(control.write_input(&bytes), &events).is_err() {
                     return;
                 }
@@ -198,7 +214,41 @@ fn terminal_worker(
 
         match output.try_recv() {
             Ok(Ok(bytes)) => {
-                terminal.write(&bytes);
+                if let Some(input) = terminal.snapshot().ok().and_then(|s| s.composer_input()) {
+                    command_input = input;
+                }
+                for byte in bytes {
+                    terminal.write(&[byte]);
+                    if let Some(capture) = &mut command_terminal {
+                        capture.write(&[byte]);
+                    }
+                    for event in decoder.feed(&[byte]) {
+                        match event {
+                            crate::semantic::SemanticEvent::OutputStarted => {
+                                if let Ok(snapshot) = terminal.snapshot() {
+                                    command_terminal = TerminalCore::new(snapshot.size).ok();
+                                }
+                                let _ = events.send(TerminalEvent::CommandStarted {
+                                    input: command_input.clone(),
+                                });
+                            }
+                            crate::semantic::SemanticEvent::CommandCompleted { exit_status } => {
+                                if let Some(mut capture) = command_terminal.take() {
+                                    let _ = events.send(TerminalEvent::CommandCompleted {
+                                        output: captured_text(&mut capture),
+                                        exit_status,
+                                    });
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                if let Some(capture) = &mut command_terminal {
+                    let _ = events.send(TerminalEvent::CommandOutput {
+                        output: captured_text(capture),
+                    });
+                }
                 let replies = terminal.take_replies();
                 if !replies.is_empty()
                     && publish_result(control.write_input(&replies), &events).is_err()
@@ -233,6 +283,22 @@ fn terminal_worker(
             }
         }
     }
+}
+
+fn captured_text(terminal: &mut TerminalCore) -> String {
+    terminal
+        .snapshot()
+        .map(|snapshot| {
+            snapshot
+                .rows
+                .iter()
+                .map(|row| row.text().trim_end().to_owned())
+                .collect::<Vec<_>>()
+                .join("\n")
+                .trim_end()
+                .to_owned()
+        })
+        .unwrap_or_default()
 }
 
 fn publish_snapshot(
@@ -324,6 +390,58 @@ mod tests {
     use std::time::{Duration, Instant};
 
     #[test]
+    fn nushell_command_output_has_completion_status() {
+        let (handle, snapshots, events) = spawn_worker("nu", Size::new(80, 24).unwrap()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if snapshots
+                .take_latest()
+                .and_then(|s| s.composer_input())
+                .is_some()
+            {
+                break;
+            }
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(20));
+        }
+        handle.input(b"print history-visible".to_vec()).unwrap();
+        loop {
+            if snapshots
+                .take_latest()
+                .and_then(|s| s.composer_input())
+                .as_deref()
+                == Some("print history-visible")
+            {
+                break;
+            }
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(20));
+        }
+        handle.input(b"\r".to_vec()).unwrap();
+        let mut started = false;
+        loop {
+            match events.recv_timeout(Duration::from_secs(3)).unwrap() {
+                TerminalEvent::CommandStarted { input } => {
+                    assert_eq!(input, "print history-visible");
+                    started = true;
+                }
+                TerminalEvent::CommandCompleted {
+                    output,
+                    exit_status,
+                } => {
+                    assert!(started);
+                    assert_eq!(output, "history-visible");
+                    assert_eq!(exit_status, Some(0));
+                    break;
+                }
+                TerminalEvent::Error(error) => panic!("{error}"),
+                _ => {}
+            }
+        }
+        handle.input(b"exit\r".to_vec()).unwrap();
+    }
+
+    #[test]
     fn nushell_typing_is_visible_in_composer() {
         let (handle, snapshots, _) = spawn_worker("nu", Size::new(80, 24).unwrap()).unwrap();
         for (bytes, expected) in [
@@ -411,6 +529,7 @@ mod tests {
                 Ok(TerminalEvent::Error(error)) => panic!("worker error: {error}"),
                 Err(RecvTimeoutError::Timeout) => continue,
                 Err(RecvTimeoutError::Disconnected) => panic!("worker disconnected"),
+                Ok(_) => {}
             }
         };
 
@@ -456,6 +575,7 @@ mod tests {
                 Ok(TerminalEvent::ChildExited(_)) => break false,
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => break false,
+                Ok(_) => {}
             }
         };
         handle.shutdown().unwrap();

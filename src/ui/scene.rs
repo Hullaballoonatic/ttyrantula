@@ -294,7 +294,7 @@ fn header_text(metrics: Metrics) -> impl Iterator<Item = Text> {
             TextWeight::Semibold,
         ),
         text(
-            "MOCK SESSION",
+            "LIVE SESSION",
             rect(
                 (metrics.width - metrics.dip(154.0)).max(metrics.dip(160.0)),
                 metrics.dip(17.0),
