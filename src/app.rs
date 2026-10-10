@@ -1,5 +1,8 @@
 use crate::renderer::Renderer;
-use std::{error::Error, sync::Arc};
+use std::{
+    error::Error,
+    sync::{Arc, mpsc::Receiver},
+};
 use ttyrantula::{
     clipboard::SystemClipboard,
     input::{
@@ -7,9 +10,12 @@ use ttyrantula::{
         KeySequenceState, KeymapResult, Modifiers, adjacent_command, resolve_key_sequence,
     },
     model::{CommandId, CopyScope, Session},
+    pty::Size,
+    session::{SnapshotMailbox, TerminalEvent, TerminalHandle, spawn_worker},
+    terminal::Snapshot,
     ui::{
-        CommandAction, InputMode, Point, UiFocus, UiState, build_scene, hit_test_action,
-        hit_test_command, hit_test_section, scroll_to_reveal_command,
+        CommandAction, InputMode, Point, UiFocus, UiState, append_terminal_snapshot, build_scene,
+        hit_test_action, hit_test_command, hit_test_section, scroll_to_reveal_command,
     },
 };
 use winit::{
@@ -41,12 +47,25 @@ struct Application {
     modifiers: ModifiersState,
     key_sequence: KeySequenceState,
     event_proxy: EventLoopProxy<UserEvent>,
+    _terminal_handle: Option<TerminalHandle>,
+    terminal_snapshots: Option<SnapshotMailbox>,
+    terminal_events: Option<Receiver<TerminalEvent>>,
+    terminal_snapshot: Option<Snapshot>,
 }
 
 impl Application {
     fn new(event_proxy: EventLoopProxy<UserEvent>) -> Self {
         let session = Session::prototype();
         let ui = UiState::for_session(&session);
+        let terminal = Size::new(80, 24)
+            .ok()
+            .and_then(|size| match spawn_worker("sh", size) {
+                Ok((handle, snapshots, events)) => Some((handle, snapshots, events)),
+                Err(error) => {
+                    eprintln!("failed to start terminal worker: {error}");
+                    None
+                }
+            });
 
         Self {
             session,
@@ -57,20 +76,49 @@ impl Application {
             modifiers: ModifiersState::default(),
             key_sequence: KeySequenceState::default(),
             event_proxy,
+            _terminal_handle: terminal.as_ref().map(|(handle, _, _)| handle.clone()),
+            terminal_snapshots: terminal.as_ref().map(|(_, snapshots, _)| snapshots.clone()),
+            terminal_events: terminal.map(|(_, _, events)| events),
+            terminal_snapshot: None,
         }
     }
 
     fn scene(&self) -> Option<ttyrantula::ui::Scene> {
         self.renderer.as_ref().map(|renderer| {
             let size = renderer.window().inner_size();
-            build_scene(
+            let mut scene = build_scene(
                 &self.session,
                 &self.ui,
                 size.width,
                 size.height,
                 renderer.window().scale_factor() as f32,
-            )
+            );
+            if let Some(snapshot) = &self.terminal_snapshot {
+                append_terminal_snapshot(&mut scene, snapshot);
+            }
+            scene
         })
+    }
+
+    fn poll_terminal(&mut self) {
+        if let Some(mailbox) = &self.terminal_snapshots
+            && let Some(snapshot) = mailbox.take_latest()
+        {
+            self.terminal_snapshot = Some(snapshot);
+            self.request_redraw();
+        }
+
+        let Some(events) = &self.terminal_events else {
+            return;
+        };
+        while let Ok(event) = events.try_recv() {
+            match event {
+                TerminalEvent::ChildExited(status) => {
+                    eprintln!("terminal child exited with {:?}", status.code);
+                }
+                TerminalEvent::Error(error) => eprintln!("terminal worker failed: {error}"),
+            }
+        }
     }
 
     fn update_hover(&mut self) {
@@ -318,6 +366,10 @@ impl Application {
 }
 
 impl ApplicationHandler<UserEvent> for Application {
+    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+        self.poll_terminal();
+    }
+
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.renderer.is_some() {
             return;

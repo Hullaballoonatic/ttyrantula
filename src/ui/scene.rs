@@ -1,8 +1,11 @@
-use crate::model::{CommandId, Session};
+use crate::{
+    model::{CommandId, Session},
+    terminal::Snapshot,
+};
 
 use super::{
     command::append_command,
-    geometry::{Point, Quad, Rect, Rgba, Text, TextWeight, quad, rect, text},
+    geometry::{Point, Quad, Rect, Rgba, Text, TextAlign, TextWeight, quad, rect, text},
     state::{CommandAction, CommandSection, UiFocus, UiState},
 };
 
@@ -190,6 +193,44 @@ pub fn build_scene(
     scene.history_scroll_limit = history_scroll_limit;
 
     scene
+}
+
+/// Appends a minimal conventional terminal surface over the history viewport.
+/// Command hit-testing remains based on the underlying mock scene until the
+/// live command model replaces it.
+pub fn append_terminal_snapshot(scene: &mut Scene, snapshot: &Snapshot) {
+    let bounds = scene.history_bounds;
+    scene.quads.push(Quad {
+        bounds,
+        color: [0.02, 0.024, 0.023, 1.0],
+    });
+
+    let line_height = 18.0;
+    let font_size = 14.0;
+    let left = bounds.x + 14.0;
+    let top = bounds.y + 12.0;
+    snapshot
+        .rows
+        .iter()
+        .enumerate()
+        .take_while(|(index, _)| top + *index as f32 * line_height < bounds.y + bounds.height)
+        .for_each(|(index, row)| {
+            scene.text.push(Text {
+                content: row.text(),
+                bounds: Rect {
+                    x: left,
+                    y: top + index as f32 * line_height,
+                    width: bounds.width - 28.0,
+                    height: line_height,
+                },
+                clip_bounds: bounds,
+                color: [218, 226, 220, 255],
+                font_size,
+                line_height,
+                weight: TextWeight::Normal,
+                align: TextAlign::Left,
+            });
+        });
 }
 
 #[must_use]
