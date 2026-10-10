@@ -7,6 +7,8 @@
 /// A shell-semantic event decoded from OSC 133.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SemanticEvent {
+    /// Current directory reported by the shell's OSC 7 integration.
+    WorkingDirectory(String),
     /// A new shell prompt has started.
     PromptStarted,
     /// The shell's editable command input has started.
@@ -95,6 +97,23 @@ fn finish_osc(state: &mut ParserState, payload: Vec<u8>) -> Option<SemanticEvent
 }
 
 fn parse_osc133(payload: &[u8]) -> Option<SemanticEvent> {
+    if let Some(uri) = payload.strip_prefix(b"7;file://") {
+        let slash = uri.iter().position(|byte| *byte == b'/')?;
+        let mut decoded = Vec::new();
+        let mut bytes = uri[slash..].iter().copied();
+        while let Some(byte) = bytes.next() {
+            if byte == b'%' {
+                let high = char::from(bytes.next()?).to_digit(16)?;
+                let low = char::from(bytes.next()?).to_digit(16)?;
+                decoded.push((high * 16 + low) as u8);
+            } else {
+                decoded.push(byte);
+            }
+        }
+        return String::from_utf8(decoded)
+            .ok()
+            .map(SemanticEvent::WorkingDirectory);
+    }
     let body = payload.strip_prefix(b"133;")?;
     let (marker, parameters) = body
         .split_first()
@@ -118,6 +137,16 @@ fn parse_osc133(payload: &[u8]) -> Option<SemanticEvent> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn directory_urls_are_decoded_across_chunks() {
+        let mut decoder = SemanticDecoder::default();
+        assert!(decoder.feed(b"\x1b]7;file://host/home/a%").is_empty());
+        assert_eq!(
+            decoder.feed(b"20b\x07"),
+            vec![SemanticEvent::WorkingDirectory("/home/a b".into())]
+        );
+    }
 
     #[test]
     fn decodes_markers_split_across_input_chunks() {
@@ -154,7 +183,10 @@ mod tests {
     fn ignores_other_osc_commands_and_malformed_statuses() {
         let mut decoder = SemanticDecoder::default();
 
-        assert!(decoder.feed(b"\x1b]7;file:///tmp\x1b\\").is_empty());
+        assert_eq!(
+            decoder.feed(b"\x1b]7;file:///tmp\x1b\\"),
+            vec![SemanticEvent::WorkingDirectory("/tmp".into())]
+        );
         assert_eq!(
             decoder.feed(b"\x1b]133;D;not-a-number\x1b\\").as_slice(),
             [SemanticEvent::CommandCompleted { exit_status: None }]

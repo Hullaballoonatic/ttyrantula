@@ -144,18 +144,29 @@ impl Snapshot {
     /// Reads the shell-owned input on the active cursor row.
     #[must_use]
     pub fn composer_input(&self) -> Option<String> {
-        let row = self.rows.get(usize::from(self.cursor?.row))?;
+        let cursor = self.cursor?;
+        let row = self.rows.get(usize::from(cursor.row))?;
         row.cells
             .iter()
             .any(|cell| cell.semantic_content == SemanticContent::Prompt)
             .then(|| {
-                row.cells
+                let end = row
+                    .cells
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, cell)| {
+                        cell.semantic_content == SemanticContent::Input
+                            && !cell.text.trim().is_empty()
+                    })
+                    .map(|(index, _)| index + 1)
+                    .next_back()
+                    .unwrap_or(0)
+                    .max(usize::from(cursor.column));
+                row.cells[..end.min(row.cells.len())]
                     .iter()
                     .filter(|cell| cell.semantic_content == SemanticContent::Input)
                     .map(|cell| cell.text.as_str())
                     .collect::<String>()
-                    .trim_end()
-                    .to_owned()
             })
     }
 }

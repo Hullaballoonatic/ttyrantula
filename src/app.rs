@@ -125,6 +125,9 @@ impl Application {
         };
         while let Ok(event) = events.try_recv() {
             match event {
+                TerminalEvent::WorkingDirectory(path) => {
+                    self.session.composer.working_directory = path;
+                }
                 TerminalEvent::CommandStarted { input } => {
                     let id = CommandId(self.session.commands.len());
                     self.session.commands.push(ttyrantula::model::Command {

@@ -108,6 +108,14 @@ the mock command UI prematurely.
 
 ### Next semantic integration checkpoint
 
+Composer projection now preserves trailing spaces up to the shell cursor.
+The development Nushell session disables `show_hints` because the current
+plain-text projection cannot distinguish inline suggestions from submitted
+input. OSC 7 updates Composer working-directory metadata and the directory
+recorded on subsequent commands; historical entries retain their execution
+directory. Real Nushell regressions cover `l`, trailing spaces, deletion, and
+changing directory; protocol tests cover percent-encoded directory paths.
+
 Live command history now replaces the application mock entries. The worker
 observes OSC 133 in byte order, emits command-start/output/completion events,
 and uses a separate Ghostty core to render each command's output as plain

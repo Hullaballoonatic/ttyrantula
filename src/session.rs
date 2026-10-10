@@ -58,6 +58,7 @@ pub enum TerminalCommand {
 /// Events published by the terminal worker for the GUI/application owner.
 #[derive(Debug)]
 pub enum TerminalEvent {
+    WorkingDirectory(String),
     CommandStarted {
         input: String,
     },
@@ -126,7 +127,12 @@ pub fn spawn_worker(
     size: Size,
 ) -> Result<(TerminalHandle, SnapshotMailbox, Receiver<TerminalEvent>), SessionError> {
     let args: &[&str] = if program == "nu" {
-        &["--no-config-file", "--no-history"]
+        &[
+            "--no-config-file",
+            "--no-history",
+            "--execute",
+            "$env.config.show_hints = false",
+        ]
     } else {
         &[]
     };
@@ -224,6 +230,9 @@ fn terminal_worker(
                     }
                     for event in decoder.feed(&[byte]) {
                         match event {
+                            crate::semantic::SemanticEvent::WorkingDirectory(path) => {
+                                let _ = events.send(TerminalEvent::WorkingDirectory(path));
+                            }
                             crate::semantic::SemanticEvent::OutputStarted => {
                                 if let Ok(snapshot) = terminal.snapshot() {
                                     command_terminal = TerminalCore::new(snapshot.size).ok();
@@ -390,6 +399,31 @@ mod tests {
     use std::time::{Duration, Instant};
 
     #[test]
+    fn nushell_reports_changed_directory() {
+        let (handle, snapshots, events) = spawn_worker("nu", Size::new(80, 24).unwrap()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while snapshots
+            .take_latest()
+            .and_then(|s| s.composer_input())
+            .is_none()
+        {
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(20));
+        }
+        while events.try_recv().is_ok() {}
+        handle.input(b"cd /\r".to_vec()).unwrap();
+        loop {
+            assert!(Instant::now() < deadline);
+            match events.recv_timeout(Duration::from_secs(3)).unwrap() {
+                TerminalEvent::WorkingDirectory(path) if path == "/" => break,
+                TerminalEvent::Error(error) => panic!("{error}"),
+                _ => {}
+            }
+        }
+        handle.input(b"exit\r".to_vec()).unwrap();
+    }
+
+    #[test]
     fn nushell_command_output_has_completion_status() {
         let (handle, snapshots, events) = spawn_worker("nu", Size::new(80, 24).unwrap()).unwrap();
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -446,9 +480,14 @@ mod tests {
         let (handle, snapshots, _) = spawn_worker("nu", Size::new(80, 24).unwrap()).unwrap();
         for (bytes, expected) in [
             (b"".as_slice(), ""),
+            (b"l".as_slice(), "l"),
+            (b"\x7f".as_slice(), ""),
             (b"p".as_slice(), "p"),
             (b"r".as_slice(), "pr"),
             (b"\x7f".as_slice(), "p"),
+            (b" ".as_slice(), "p "),
+            (b" ".as_slice(), "p  "),
+            (b"\x7f\x7f".as_slice(), "p"),
             (
                 b"rint composer-visible".as_slice(),
                 "print composer-visible",
