@@ -161,6 +161,7 @@ fn terminal_worker(
     if publish_snapshot(&mut terminal, &snapshots, &events).is_err() {
         return;
     }
+    let mut child_status = None;
 
     loop {
         match commands.recv_timeout(Duration::from_millis(10)) {
@@ -193,6 +194,12 @@ fn terminal_worker(
         match output.try_recv() {
             Ok(Ok(bytes)) => {
                 terminal.write(&bytes);
+                let replies = terminal.take_replies();
+                if !replies.is_empty()
+                    && publish_result(control.write_input(&replies), &events).is_err()
+                {
+                    return;
+                }
                 if publish_snapshot(&mut terminal, &snapshots, &events).is_err() {
                     return;
                 }
@@ -202,13 +209,17 @@ fn terminal_worker(
                 return;
             }
             Err(mpsc::TryRecvError::Empty) => {}
-            Err(mpsc::TryRecvError::Disconnected) => return,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                if let Some(status) = child_status {
+                    let _ = events.send(TerminalEvent::ChildExited(status));
+                    return;
+                }
+            }
         }
 
         match control.try_wait() {
             Ok(Some(status)) => {
-                let _ = events.send(TerminalEvent::ChildExited(status));
-                return;
+                child_status = Some(status);
             }
             Ok(None) => {}
             Err(error) => {
@@ -268,6 +279,11 @@ impl TerminalSession {
     pub fn read_into_terminal(&mut self, buffer: &mut [u8]) -> Result<usize, SessionError> {
         let count = self.pty.read(buffer)?;
         self.terminal.write(&buffer[..count]);
+        let replies = self.terminal.take_replies();
+        if !replies.is_empty() {
+            self.pty.write_all(&replies)?;
+            self.pty.flush()?;
+        }
         Ok(count)
     }
 
@@ -301,6 +317,29 @@ impl TerminalSession {
 mod tests {
     use super::*;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn nushell_typing_is_visible_in_composer() {
+        let (handle, snapshots, _) = spawn_worker("nu", Size::new(80, 24).unwrap()).unwrap();
+        std::thread::sleep(Duration::from_millis(500));
+        handle.input(b"print composer-visible".to_vec()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut latest = None;
+        loop {
+            if let Some(snapshot) = snapshots.take_latest() {
+                if snapshot.composer_input().as_deref() == Some("print composer-visible") {
+                    handle.input(b"\x03exit\r".to_vec()).unwrap();
+                    return;
+                }
+                latest = snapshot.composer_input();
+            }
+            assert!(
+                Instant::now() < deadline,
+                "Nushell input missing: {latest:?}"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
 
     #[cfg(unix)]
     #[test]

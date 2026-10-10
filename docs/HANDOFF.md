@@ -118,6 +118,11 @@ This first projection handles single-row input only: multiline input,
 completion presentation, cursor rendering, and live command history are
 still required. Mock history has not yet been replaced.
 
+Fixed the blank Nushell Composer by returning Ghostty-generated terminal
+protocol responses to the PTY. Nushell's startup queries previously received
+no response. A real Nushell regression test now types a command without
+submitting it and verifies its text reaches the Composer projection.
+
 Use Nushell for the initial semantic shell integration, as agreed with the
 user. Nushell is installed locally; choosing other shells can follow later.
 The conventional shell surface is a temporary proof and fallback, not the
