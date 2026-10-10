@@ -13,6 +13,12 @@ Graphical decoration must remain independent of terminal contents.
 
 ## Overall Layout
 
+The intended multiplexed layout adds a sidebar inspired by Herdr alongside
+the active terminal session. It should expose sessions, ongoing processes,
+and agent state. Each session has its own Composer and command history, or
+its own conventional terminal surface during full-screen handoff. Detailed
+grouping, pane layout, and agent-state presentation remain unresolved.
+
 During ordinary shell interaction, the surface consists conceptually of:
 
     ┌─────────────────────────────────────────────┐
@@ -131,9 +137,11 @@ For an expanded Command, hovering over Input or Output reveals a single copy
 button scoped to that section. This section action replaces the main Command
 action set so only one floating action set is visible at a time.
 
-Expanding and collapsing is controlled by its disclosure button rather than by
-clicking the Command body. Each Command retains its own expansion state until
-the user changes it.
+Clicking a Command header should toggle expansion; right-clicking the header
+should open a context menu for actions such as copying Input, Output, or all
+content. Output interaction must remain available for text selection. Each
+Command retains its own expansion state until the user changes it. This is
+the agreed next interaction, not a claim about the current implementation.
 
 Keyboard focus begins in the Composer. The prototype's `Ctrl+H` binding moves
 focus to the newest Command. While history has focus, Up/Down or `j`/`k` move

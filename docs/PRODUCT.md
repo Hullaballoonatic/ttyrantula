@@ -21,12 +21,10 @@ The application is not intended to provide:
 - AI features
 - cloud accounts or cloud synchronization
 - shell command history search
-- tabs
 - IDE functionality
 - file browsers
 - notebooks
 - a replacement shell
-- a replacement terminal multiplexer
 
 These are explicitly outside the current product vision.
 
@@ -186,5 +184,15 @@ not an MVP requirement.
 The architecture should avoid unnecessarily preventing deeper multiplexer
 integration in the future.
 
-The application is not intended to replace the session, window, or pane
-management functionality of a multiplexer.
+Built-in multiplexing is now part of the product direction and a prerequisite
+for dogfooding. The application will own session and pane management so each
+terminal session can retain its own semantic Composer and command history.
+Herdr is the initial layout and workflow reference, not a required runtime
+dependency or a commitment to reproduce every feature.
+
+The sidebar should show terminal sessions, ongoing processes, and the state of
+terminal-based agents. This visibility does not imply an embedded AI assistant
+or agent orchestration. How agent state is obtained remains unresolved.
+
+Deeper integration with existing multiplexers remains an open possibility if
+their interfaces prove suitable for the application's graphical layout.

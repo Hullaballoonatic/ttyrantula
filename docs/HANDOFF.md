@@ -9,6 +9,14 @@ history, and hint presentation work on the development machine.
 
 ### Follow-up to-dos
 
+- Dogfooding prerequisites: reliable full-screen handoff for Neovim and
+  terminal-based Codex, plus built-in multiplexing inspired by Herdr.
+- Add a sidebar showing sessions, ongoing processes, and agent state;
+  determine the source of agent-state information before implementing it.
+- Make header clicks toggle Command expansion and header right-clicks open
+  a context menu for copying and other actions.
+- Investigate Atuin compatibility (see `OPEN_QUESTIONS.md`).
+
 - Support selecting and running different shells, with appropriate semantic
   integration and fallback behavior for each.
 - Track the active shell, including changes within an existing session, and

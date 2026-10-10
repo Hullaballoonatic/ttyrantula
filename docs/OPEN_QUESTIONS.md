@@ -50,6 +50,10 @@ questions.
 
 ## Terminal Semantics
 
+- How should Atuin integrate with the Composer, suggestions, command history,
+  and its interactive history interface? Compatibility remains unproven;
+  personal Atuin configuration is currently excluded from development sessions.
+
 - How should semantic Commands interact with applications that do not use the
   alternate screen but nevertheless perform complex cursor manipulation?
 - How should partially supported OSC 133 shell integration degrade?
@@ -57,6 +61,14 @@ questions.
 - How much shell-specific integration should the project own?
 
 ## Multiplexers
+
+- Which Herdr layout and workflow features should form the initial built-in
+  multiplexing baseline, and which should be deferred?
+- How should the sidebar represent ongoing processes and agent states?
+- Which reliable signals or explicit integrations can report agent state,
+  including unavailable or unknown state?
+- What session/pane switching, splitting, and lifecycle behavior is required
+  for the first dogfooding milestone?
 
 - Can OSC 133 and related semantic information be preserved reliably through
   tmux, Zellij, and herdr?
