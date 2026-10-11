@@ -57,9 +57,9 @@ The exact arrangement is intentionally unresolved.
 The Composer should visually belong to the application rather than appearing
 to be another historical Command.
 
-The prototype accepts ordinary clipboard paste into the Composer with
-`Ctrl+V`. Pasted text follows the same single-line control-character filtering
-as typed text until terminal input is connected to the PTY.
+`Ctrl+V` sends bracketed paste through the PTY to the shell. The Composer
+reflects the resulting shell input. Shell startup failures are shown visibly
+instead of accepting text into a disconnected local editor.
 
 ## Command Blocks
 
@@ -126,6 +126,10 @@ Expansion should make it possible to inspect a Command without permanently
 giving every Command the same visual weight.
 
 ### Command Actions
+
+Rerun replaces any current draft with the selected command and submits it in
+the active shell's current working directory. It is unavailable while another
+command is running; multiline rerun is currently unsupported.
 
 While using a mouse, hovering over a Command's header reveals a compact set of
 icon buttons for copying all content, rerunning, and expanding or collapsing

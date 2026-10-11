@@ -1,4 +1,4 @@
-//! A small, synchronous PTY session boundary.
+//! Native PTY transport split into blocking reads and process control.
 //!
 //! This module owns PTY transport and child-process lifecycle only. Terminal
 //! parsing and semantic command handling stay in their respective modules.
@@ -102,6 +102,7 @@ pub struct PtyControl {
 
 impl PtySession {
     /// Spawns `program` attached to a native PTY.
+    #[cfg(test)]
     pub fn spawn(program: &str, size: Size) -> Result<Self, PtyError> {
         Self::spawn_with_args(program, &[], size)
     }
@@ -150,50 +151,6 @@ impl PtySession {
                 child: self.child,
             },
         )
-    }
-
-    /// Reads the next available PTY bytes into `buffer`.
-    pub fn read(&mut self, buffer: &mut [u8]) -> Result<usize, PtyError> {
-        self.reader
-            .read(buffer)
-            .map_err(|error| PtyError::Transport(error.to_string()))
-    }
-
-    /// Writes terminal input bytes to the child.
-    pub fn write_all(&mut self, bytes: &[u8]) -> Result<(), PtyError> {
-        self.writer
-            .write_all(bytes)
-            .map_err(|error| PtyError::Transport(error.to_string()))
-    }
-
-    /// Flushes bytes already written to the child.
-    pub fn flush(&mut self) -> Result<(), PtyError> {
-        self.writer
-            .flush()
-            .map_err(|error| PtyError::Transport(error.to_string()))
-    }
-
-    /// Updates the child-visible PTY dimensions.
-    pub fn resize(&self, size: Size) -> Result<(), PtyError> {
-        self.master
-            .resize(size.into_pty_size())
-            .map_err(|error| PtyError::Transport(error.to_string()))
-    }
-
-    /// Polls the child without blocking.
-    pub fn try_wait(&mut self) -> Result<Option<ExitStatus>, PtyError> {
-        self.child
-            .try_wait()
-            .map_err(|error| PtyError::Child(error.to_string()))
-            .map(|status| status.map(exit_status))
-    }
-
-    /// Waits for the child to exit.
-    pub fn wait(&mut self) -> Result<ExitStatus, PtyError> {
-        self.child
-            .wait()
-            .map(exit_status)
-            .map_err(|error| PtyError::Child(error.to_string()))
     }
 }
 
@@ -266,46 +223,6 @@ mod tests {
     fn rejects_an_empty_pty() {
         assert!(Size::new(0, 24).is_err());
         assert!(Size::new(80, 0).is_err());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn transports_bytes_resizes_and_observes_child_exit() {
-        let mut session = PtySession::spawn("sh", Size::new(80, 24).unwrap()).unwrap();
-        session
-            .write_all(b"printf 'pty-ok'; exit 7\n")
-            .and_then(|()| session.flush())
-            .unwrap();
-        session
-            .resize(Size {
-                columns: 100,
-                rows: 30,
-                pixel_width: 800,
-                pixel_height: 600,
-            })
-            .unwrap();
-
-        let deadline = Instant::now() + Duration::from_secs(3);
-        let mut bytes = Vec::new();
-        let mut buffer = [0; 256];
-        let status = loop {
-            match session.try_wait().unwrap() {
-                Some(status) => break status,
-                None if Instant::now() >= deadline => panic!("child did not exit"),
-                None => {
-                    let count = session.read(&mut buffer).unwrap();
-                    bytes.extend_from_slice(&buffer[..count]);
-                }
-            }
-        };
-
-        assert!(
-            bytes
-                .windows(b"pty-ok".len())
-                .any(|window| window == b"pty-ok")
-        );
-        assert_eq!(status.code, Some(7));
-        assert!(!status.success);
     }
 
     #[cfg(unix)]

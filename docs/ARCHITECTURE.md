@@ -74,10 +74,9 @@ The current trial uses pinned `portable-pty` 0.9.0 behind a small local
 `PtySession` boundary. It owns spawning, byte transport, resize, and child
 lifecycle without exposing portable-pty types to the rest of the application.
 The boundary is independently tested with a real shell process. A
-`TerminalSession` provides the synchronous proof boundary, while the threaded
-worker path separates a blocking `PtyReader` from control operations, keeps
-Ghostty on one owner thread, and publishes latest-frame snapshots for GUI
-consumers. Renderer wiring remains a later step.
+The runtime separates a blocking `PtyReader` from control operations, keeps
+Ghostty on one owner thread, and publishes latest-frame snapshots and command
+events to the GUI. The earlier synchronous proof coordinator was removed.
 
 ## Terminal Core
 
@@ -228,11 +227,12 @@ them. A centralized, context-aware keymap translates key chords into
 application actions. Printable Composer text remains a separate input path so
 changing a navigation binding does not affect text decoding.
 
-Pointer and keyboard activation dispatch the same Command actions. The current
-prototype edits mock Composer text directly; after PTY integration, ordinary
-terminal input belongs to the PTY and Terminal Core path rather than a custom
-line editor. Alternate-screen applications must receive conventional terminal
-input without semantic-history navigation interfering.
+Pointer and keyboard activation dispatch the same Command actions. Ordinary
+terminal input belongs to the PTY and Terminal Core path; Composer text is a
+projection of shell-owned editing. Shell startup failures are visible rather
+than falling back to a local editor. Alternate-screen applications must
+receive conventional terminal input without semantic-history navigation
+interfering.
 
 ## Clipboard
 

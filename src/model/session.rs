@@ -1,6 +1,9 @@
+#[cfg(test)]
 use std::time::Duration;
 
-use super::{Command, CommandId, CommandState, Metadata};
+use super::Command;
+#[cfg(test)]
+use super::{CommandId, CommandState, Metadata};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Composer {
@@ -17,6 +20,20 @@ pub struct Session {
 }
 
 impl Session {
+    #[must_use]
+    pub fn new(working_directory: String) -> Self {
+        Self {
+            commands: Vec::new(),
+            composer: Composer {
+                input: String::new(),
+                hint: String::new(),
+                working_directory,
+                branch: None,
+            },
+        }
+    }
+
+    #[cfg(test)]
     #[must_use]
     pub fn prototype() -> Self {
         Self {
@@ -73,49 +90,5 @@ impl Session {
                 branch: Some("main".into()),
             },
         }
-    }
-
-    #[must_use]
-    pub fn with_composer_text(&self, text: &str) -> Self {
-        let mut input = self.composer.input.clone();
-        input.extend(text.chars().filter(|character| !character.is_control()));
-
-        Self {
-            composer: Composer {
-                input,
-                ..self.composer.clone()
-            },
-            ..self.clone()
-        }
-    }
-
-    #[must_use]
-    pub fn with_composer_backspace(&self) -> Self {
-        let mut input = self.composer.input.clone();
-        input.pop();
-
-        Self {
-            composer: Composer {
-                input,
-                ..self.composer.clone()
-            },
-            ..self.clone()
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn composer_edits_return_updated_sessions() {
-        let session = Session::prototype();
-        let appended = session.with_composer_text("release\n");
-        let deleted = appended.with_composer_backspace();
-
-        assert_eq!(session.composer.input, "cargo test --");
-        assert_eq!(appended.composer.input, "cargo test --release");
-        assert_eq!(deleted.composer.input, "cargo test --releas");
     }
 }

@@ -1,6 +1,6 @@
 # Project Handoff
 
-Updated: 2026-10-10
+Updated: 2026-10-11
 
 ## Current State
 
@@ -35,10 +35,10 @@ Linux/Wayland. Its defining feature is semantic command presentation: ordinary
 shell commands and their output become graphical Command blocks, while
 full-screen applications behave like a conventional terminal.
 
-The current application is a graphical prototype backed by mock Command data.
-The terminal-core adapter and a synchronous PTY session boundary now exist as
-independently tested components, but neither is connected to the graphical
-application yet.
+The application runs Nushell through a threaded PTY/Ghostty runtime. Composer
+input and hints, command output/history, exit status, and working-directory
+updates are connected to the GUI. Mock commands exist only as test fixtures.
+The obsolete synchronous trial coordinator has been removed.
 
 Implemented prototype behavior includes:
 
@@ -72,8 +72,8 @@ The terminal-core trial now also includes:
   upstream dispatch callback when that API becomes available.
 - a pinned `portable-pty` 0.9.0 `PtySession` boundary with real-shell tests for
   byte transport, resize, and child exit status.
-- a synchronous `TerminalSession` coordinator that routes PTY output through
-  `TerminalCore` and exposes owned snapshots without leaking library types.
+- a terminal-core worker that routes PTY output through `TerminalCore` and
+  exposes owned snapshots and semantic lifecycle events.
 
 ## Agreed Direction
 
@@ -100,7 +100,8 @@ rather than an automatic version bump.
 
 ## Proposed Trial
 
-Do not begin by replacing the mock UI. The trial currently stands here:
+The original trial has reached live semantic history; remaining limitations
+are tracked below. Current progress:
 
 1. [x] Add a reproducible Nix build for a pinned `libghostty-vt` revision.
 2. [x] Add a narrow `terminal` adapter and recorded-stream tests.
@@ -109,7 +110,7 @@ Do not begin by replacing the mock UI. The trial currently stands here:
    availability. Lifecycle callbacks are absent in the selected API, so the
    local OSC 133 decoder remains provisional.
 4. [x] Route PTY output through the terminal core and input bytes back to the
-   PTY through the synchronous `TerminalSession` coordinator.
+   PTY through the terminal-core worker.
 5. [x] Establish non-blocking I/O scheduling so PTY reads cannot stall the
    window loop. The PTY boundary is now split into a blocking reader worker
    and nonblocking control operations. A terminal-core worker now owns
@@ -118,21 +119,23 @@ Do not begin by replacing the mock UI. The trial currently stands here:
 6. [~] Render a conventional live terminal in the existing Wayland
    application. The application now starts the shell worker, polls the latest
    snapshot during `about_to_wait`, and renders terminal rows in the history
-   viewport. Keyboard input now routes to the PTY; resize propagation and
-   resize propagation now update both the PTY and Ghostty grid; final layout
-   remains.
-7. [ ] Translate semantic lifecycle events into Running and Completed Commands.
-8. [ ] Replace mock Command data with live semantic data only after the
-   ordinary terminal path is correct.
+   viewport. Input and resize are connected, but accurate viewport/font
+   geometry and complete full-screen rendering/input remain unfinished.
+7. [x] Translate semantic lifecycle events into Running and Completed Commands.
+8. [x] Replace application mock history with live semantic history.
 
-The non-blocking scheduling boundary is implemented and independently tested.
-The next implementation slice is step 6: connect the mailbox to the existing
-Wayland application and render a conventional live terminal without replacing
-the mock command UI prematurely.
+The next milestone is dogfooding readiness: preserve long output, finish
+full-screen handoff, and establish built-in multiplexing.
 
 ## Intended Runtime Boundaries
 
 ### Next semantic integration checkpoint
+
+Cleanup removed the synchronous `TerminalSession`, duplicate direct PTY
+operations, and local Composer editing fallback. Shell startup failures are
+shown in the GUI. Rerun replaces the editable line and submits it in the
+current shell directory once Nushell confirms the replacement; running
+commands cannot be rerun concurrently. Multiline rerun remains unsupported.
 
 Hints are now enabled with a controlled dim style. Composer input and hint
 suffix are separate fields, drawn as normal text over a gray suggestion.
@@ -142,10 +145,8 @@ in this session can provide hints without loading personal history or Atuin.
 The real Nushell regression verifies hint separation, Right Arrow acceptance,
 and execution of the accepted command.
 
-Composer projection now preserves trailing spaces up to the shell cursor.
-The development Nushell session disables `show_hints` because the current
-plain-text projection cannot distinguish inline suggestions from submitted
-input. OSC 7 updates Composer working-directory metadata and the directory
+Composer projection preserves trailing spaces up to the shell cursor.
+OSC 7 updates Composer working-directory metadata and the directory
 recorded on subsequent commands; historical entries retain their execution
 directory. Real Nushell regressions cover `l`, trailing spaces, deletion, and
 changing directory; protocol tests cover percent-encoded directory paths.
@@ -156,13 +157,13 @@ and uses a separate Ghostty core to render each command's output as plain
 text. The GUI creates Running entries and completes them with exit status.
 A real Nushell test verifies command text, output, and successful completion.
 Current limits: captured output is limited to the command capture viewport
-(scrollback capture is still required); metadata starts at the application's
-working directory and does not yet follow `cd`; durations are not recorded;
+(scrollback capture is still required); durations are not recorded;
 output styles are plain text. Do not treat the earlier checklist as complete
 terminal behavior. These limitations remain follow-up work.
 
-During development, Nushell starts with `--no-config-file --no-history` to
-avoid personal startup hooks (including Atuin) and personal history. No user
+During development, Nushell starts with `--no-config-file` and an isolated
+configuration directory to avoid personal startup hooks (including Atuin)
+and personal history. No user
 configuration files are changed. The real Nushell regression checks exact
 Composer text after individual letters and Backspace. Application keybindings
 now run before PTY input routing, and history focus suppresses shell typing.
@@ -171,11 +172,10 @@ The application now launches `nu` instead of `sh`. The Composer projects
 shell-owned input cells from the active cursor row using Ghostty's OSC 133
 classifications; typing and editing continue to go to Nushell. Integrated
 prompt/input rows are no longer overlaid on history as a conventional shell.
-The conventional view remains during output, alternate-screen applications,
-or missing prompt classification. Paste is forwarded as bracketed PTY input.
-This first projection handles single-row input only: multiline input,
-completion presentation, cursor rendering, and live command history are
-still required. Mock history has not yet been replaced.
+The conventional view is currently used for alternate-screen applications.
+Paste is forwarded as bracketed PTY input. Projection handles single-row
+input only: multiline input, completion menus, and accurate cursor rendering
+remain unfinished.
 
 Fixed the blank Nushell Composer by returning Ghostty-generated terminal
 protocol responses to the PTY. Nushell's startup queries previously received

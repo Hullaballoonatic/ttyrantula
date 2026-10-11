@@ -196,8 +196,7 @@ pub fn build_scene(
 }
 
 /// Appends a minimal conventional terminal surface over the history viewport.
-/// Command hit-testing remains based on the underlying mock scene until the
-/// live command model replaces it.
+/// This is the current minimal alternate-screen presentation.
 pub fn append_terminal_snapshot(scene: &mut Scene, snapshot: &Snapshot) {
     let bounds = scene.history_bounds;
     scene.quads.push(Quad {

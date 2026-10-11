@@ -52,27 +52,22 @@ struct Application {
     terminal_snapshots: Option<SnapshotMailbox>,
     terminal_events: Option<Receiver<TerminalEvent>>,
     terminal_snapshot: Option<Snapshot>,
+    terminal_error: Option<String>,
 }
 
 impl Application {
     fn new(event_proxy: EventLoopProxy<UserEvent>) -> Self {
-        let mut session = Session::prototype();
-        session.commands.clear();
-        session.composer.input.clear();
-        session.composer.working_directory = std::env::current_dir()
-            .map(|path| path.display().to_string())
-            .unwrap_or_default();
-        session.composer.branch = None;
+        let session = Session::new(
+            std::env::current_dir()
+                .map(|path| path.display().to_string())
+                .unwrap_or_default(),
+        );
         let ui = UiState::for_session(&session);
-        let terminal = Size::new(80, 24)
-            .ok()
-            .and_then(|size| match spawn_worker("nu", size) {
-                Ok((handle, snapshots, events)) => Some((handle, snapshots, events)),
-                Err(error) => {
-                    eprintln!("failed to start terminal worker: {error}");
-                    None
-                }
-            });
+        let result = Size::new(80, 24)
+            .map_err(|error| error.to_string())
+            .and_then(|size| spawn_worker("nu", size).map_err(|error| error.to_string()));
+        let terminal_error = result.as_ref().err().cloned();
+        let terminal = result.ok();
 
         Self {
             session,
@@ -87,6 +82,7 @@ impl Application {
             terminal_snapshots: terminal.as_ref().map(|(_, snapshots, _)| snapshots.clone()),
             terminal_events: terminal.map(|(_, _, events)| events),
             terminal_snapshot: None,
+            terminal_error,
         }
     }
 
@@ -100,6 +96,18 @@ impl Application {
                 size.height,
                 renderer.window().scale_factor() as f32,
             );
+            if let Some(error) = &self.terminal_error {
+                scene.text.push(ttyrantula::ui::Text {
+                    content: format!("Shell unavailable: {error}"),
+                    bounds: scene.history_bounds,
+                    clip_bounds: scene.history_bounds,
+                    color: [235, 100, 90, 255],
+                    font_size: 14.0,
+                    line_height: 20.0,
+                    weight: ttyrantula::ui::TextWeight::Normal,
+                    align: ttyrantula::ui::TextAlign::Left,
+                });
+            }
             if let Some(snapshot) = &self.terminal_snapshot
                 && snapshot.screen == ttyrantula::terminal::ScreenKind::Alternate
             {
@@ -163,9 +171,12 @@ impl Application {
                     }
                 }
                 TerminalEvent::ChildExited(status) => {
-                    eprintln!("terminal child exited with {:?}", status.code);
+                    self.terminal_error = Some(format!("shell exited with {:?}", status.code));
+                    self.terminal_handle = None;
                 }
-                TerminalEvent::Error(error) => eprintln!("terminal worker failed: {error}"),
+                TerminalEvent::Error(error) => {
+                    self.terminal_error = Some(error.to_string());
+                }
             }
         }
         self.request_redraw();
@@ -243,7 +254,25 @@ impl Application {
                 self.ensure_command_visible(command_id);
             }
             CommandAction::Copy(scope) => self.copy_command(command_id, scope),
-            CommandAction::Rerun => {}
+            CommandAction::Rerun => {
+                if self.session.commands.iter().any(|command| {
+                    matches!(command.state, ttyrantula::model::CommandState::Running)
+                }) {
+                    return;
+                }
+                if let Some(command) = self
+                    .session
+                    .commands
+                    .iter()
+                    .find(|command| command.id == command_id)
+                    && let Some(handle) = &self.terminal_handle
+                {
+                    if let Err(error) = handle.rerun(command.input.clone()) {
+                        self.terminal_error = Some(error.to_string());
+                    }
+                    self.ui = self.ui.with_keyboard_focus(UiFocus::Composer);
+                }
+            }
         }
     }
 
@@ -342,25 +371,12 @@ impl Application {
             return;
         }
 
-        if let Some(handle) = &self.terminal_handle {
-            if let Some(bytes) = terminal_input_bytes(&event, self.modifiers)
-                && let Err(error) = handle.input(bytes)
-            {
-                eprintln!("terminal input failed: {error}");
-            }
-            return;
+        if let Some(handle) = &self.terminal_handle
+            && let Some(bytes) = terminal_input_bytes(&event, self.modifiers)
+            && let Err(error) = handle.input(bytes)
+        {
+            eprintln!("terminal input failed: {error}");
         }
-
-        self.ui = self.ui.with_keyboard_focus(UiFocus::Composer);
-        self.session = if event.logical_key == Key::Named(NamedKey::Backspace) {
-            self.session.with_composer_backspace()
-        } else {
-            event.text.as_deref().map_or_else(
-                || self.session.clone(),
-                |text| self.session.with_composer_text(text),
-            )
-        };
-        self.request_redraw();
     }
 
     fn apply_application_action(&mut self, action: ApplicationAction) {
@@ -566,8 +582,6 @@ impl ApplicationHandler<UserEvent> for Application {
                     if let Err(error) = handle.input(bytes) {
                         eprintln!("terminal paste failed: {error}");
                     }
-                } else {
-                    self.session = self.session.with_composer_text(&text);
                 }
                 self.request_redraw();
             }

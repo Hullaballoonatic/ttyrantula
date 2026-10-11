@@ -1,8 +1,4 @@
-//! Synchronous ownership boundary between a PTY and the terminal core.
-//!
-//! The application can later move PTY reads to an I/O worker without changing
-//! terminal ownership: all bytes still enter `TerminalCore::write` through
-//! this boundary.
+//! Threaded PTY and terminal-core ownership, semantic events, and frame delivery.
 
 use crate::{
     pty::{ExitStatus, PtyError, PtySession, Size},
@@ -49,8 +45,9 @@ impl From<TerminalError> for SessionError {
 
 /// Commands sent by the GUI/application owner to the terminal worker.
 #[derive(Debug)]
-pub enum TerminalCommand {
+enum TerminalCommand {
     Input(Vec<u8>),
+    Rerun(String),
     Resize(Size),
     Shutdown,
 }
@@ -99,6 +96,15 @@ pub struct TerminalHandle {
 }
 
 impl TerminalHandle {
+    /// Replaces the editable line and executes it in the current shell directory.
+    pub fn rerun(&self, input: String) -> Result<(), SessionError> {
+        if input.contains(['\n', '\r', '\x1b']) {
+            return Err(PtyError::Child("multiline rerun is not supported yet".into()).into());
+        }
+        self.commands
+            .send(TerminalCommand::Rerun(input))
+            .map_err(|error| SessionError::Pty(PtyError::Child(error.to_string())))
+    }
     /// Sends bytes to the child process.
     pub fn input(&self, bytes: impl Into<Vec<u8>>) -> Result<(), SessionError> {
         self.commands
@@ -220,9 +226,27 @@ fn terminal_worker(
     let mut decoder = crate::semantic::SemanticDecoder::default();
     let mut command_terminal: Option<TerminalCore> = None;
     let mut command_input = String::new();
+    let mut pending_rerun: Option<(String, std::time::Instant)> = None;
 
     loop {
         match commands.recv_timeout(Duration::from_millis(10)) {
+            Ok(TerminalCommand::Rerun(input)) => {
+                if command_terminal.is_some()
+                    || pending_rerun.is_some()
+                    || terminal
+                        .snapshot()
+                        .ok()
+                        .and_then(|s| s.composer_input())
+                        .is_none()
+                {
+                    continue;
+                }
+                let bytes = format!("\x01\x0b\x1b[200~{input}\x1b[201~");
+                if publish_result(control.write_input(bytes.as_bytes()), &events).is_err() {
+                    return;
+                }
+                pending_rerun = Some((input, std::time::Instant::now()));
+            }
             Ok(TerminalCommand::Input(bytes)) => {
                 if let Some(input) = terminal.snapshot().ok().and_then(|s| s.composer_input()) {
                     command_input = input;
@@ -315,6 +339,27 @@ fn terminal_worker(
             }
         }
 
+        if let Some((input, started)) = &pending_rerun {
+            if terminal
+                .snapshot()
+                .ok()
+                .and_then(|s| s.composer_input())
+                .as_ref()
+                == Some(input)
+            {
+                command_input = input.clone();
+                if publish_result(control.write_input(b"\r"), &events).is_err() {
+                    return;
+                }
+                pending_rerun = None;
+            } else if started.elapsed() > Duration::from_secs(3) {
+                let _ = events.send(TerminalEvent::Error(
+                    PtyError::Child("shell did not confirm rerun input".into()).into(),
+                ));
+                pending_rerun = None;
+            }
+        }
+
         match control.try_wait() {
             Ok(Some(status)) => {
                 child_status = Some(status);
@@ -375,62 +420,62 @@ fn publish_terminal_result(
     })
 }
 
-/// Owns one child PTY and the terminal state that interprets its output.
-pub struct TerminalSession {
-    pty: PtySession,
-    terminal: TerminalCore,
-}
-
-impl TerminalSession {
-    /// Starts `program` with a terminal core of the same dimensions.
-    pub fn spawn(program: &str, size: Size) -> Result<Self, SessionError> {
-        let terminal = TerminalCore::new(GridSize::new(size.columns, size.rows)?)?;
-        let pty = PtySession::spawn(program, size)?;
-        Ok(Self { pty, terminal })
-    }
-
-    /// Reads one PTY chunk and immediately feeds it to Ghostty.
-    pub fn read_into_terminal(&mut self, buffer: &mut [u8]) -> Result<usize, SessionError> {
-        let count = self.pty.read(buffer)?;
-        self.terminal.write(&buffer[..count]);
-        let replies = self.terminal.take_replies();
-        if !replies.is_empty() {
-            self.pty.write_all(&replies)?;
-            self.pty.flush()?;
-        }
-        Ok(count)
-    }
-
-    /// Encodes application input as bytes sent to the child process.
-    pub fn write_input(&mut self, bytes: &[u8]) -> Result<(), SessionError> {
-        self.pty.write_all(bytes)?;
-        self.pty.flush()?;
-        Ok(())
-    }
-
-    /// Resizes both the PTY and Ghostty's terminal grid.
-    pub fn resize(&mut self, size: Size) -> Result<(), SessionError> {
-        self.pty.resize(size)?;
-        self.terminal
-            .resize(GridSize::new(size.columns, size.rows)?)?;
-        Ok(())
-    }
-
-    /// Polls the child process without blocking.
-    pub fn try_wait(&mut self) -> Result<Option<ExitStatus>, SessionError> {
-        Ok(self.pty.try_wait()?)
-    }
-
-    /// Captures the current terminal frame as owned application data.
-    pub fn snapshot(&mut self) -> Result<Snapshot, SessionError> {
-        Ok(self.terminal.snapshot()?)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn rerun_replaces_draft_and_records_exact_command() {
+        let (handle, snapshots, events) = spawn_worker("nu", Size::new(80, 24).unwrap()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if snapshots
+                .take_latest()
+                .and_then(|s| s.composer_input())
+                .is_some()
+            {
+                break;
+            }
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(20));
+        }
+        handle.input(b"draft not to execute".to_vec()).unwrap();
+        loop {
+            if snapshots
+                .take_latest()
+                .and_then(|s| s.composer_input())
+                .as_deref()
+                == Some("draft not to execute")
+            {
+                break;
+            }
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(20));
+        }
+        handle.rerun("print rerun-visible".into()).unwrap();
+        let mut started = false;
+        loop {
+            match events.recv_timeout(Duration::from_secs(4)).unwrap() {
+                TerminalEvent::CommandStarted { input } => {
+                    assert_eq!(input, "print rerun-visible");
+                    started = true;
+                }
+                TerminalEvent::CommandCompleted {
+                    output,
+                    exit_status,
+                } => {
+                    assert!(started);
+                    assert_eq!(output, "rerun-visible");
+                    assert_eq!(exit_status, Some(0));
+                    break;
+                }
+                TerminalEvent::Error(error) => panic!("{error}"),
+                _ => {}
+            }
+        }
+        handle.input(b"exit\r".to_vec()).unwrap();
+    }
 
     #[test]
     fn nushell_reports_changed_directory() {
@@ -593,37 +638,6 @@ mod tests {
             }
         }
         handle.input(b"\x03exit\r".to_vec()).unwrap();
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn routes_shell_output_into_terminal_snapshot() {
-        let size = Size::new(80, 24).unwrap();
-        let mut session = TerminalSession::spawn("sh", size).unwrap();
-        session
-            .write_input(b"printf '\\033[31mghostty-ok\\033[0m'; exit 3\n")
-            .unwrap();
-
-        let deadline = Instant::now() + Duration::from_secs(3);
-        let mut buffer = [0; 256];
-        let status = loop {
-            if let Some(status) = session.try_wait().unwrap() {
-                break status;
-            }
-            assert!(Instant::now() < deadline, "child did not exit");
-            session.read_into_terminal(&mut buffer).unwrap();
-        };
-
-        let snapshot = session.snapshot().unwrap();
-        let text = snapshot
-            .rows
-            .iter()
-            .map(crate::terminal::Row::text)
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert!(text.contains("ghostty-ok"));
-        assert_eq!(status.code, Some(3));
-        assert!(!status.success);
     }
 
     #[cfg(unix)]
